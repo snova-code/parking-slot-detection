@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit
+# Blocks large files from entering history. Override: git commit --no-verify
+set -uo pipefail
+
+MAX=5242880   # 5 MB
+fail=0
+
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] || continue
+  size=$(stat -c%s "$f")
+  if [ "$size" -gt "$MAX" ]; then
+    echo "BLOCKED: $f is $((size / 1024 / 1024))MB (limit 5MB)"
+    fail=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+if [ "$fail" -ne 0 ]; then
+  echo
+  echo "  Weights   -> GitHub Release asset, referenced by URL + sha256"
+  echo "  Datasets  -> stay in ~/data"
+  echo "  Demo video-> GitHub Release asset"
+fi
+
+exit "$fail"
