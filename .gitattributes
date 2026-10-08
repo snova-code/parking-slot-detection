@@ -1,0 +1,24 @@
+# .gitattributes
+* text=auto eol=lf
+
+*.sh          text eol=lf
+*.bash        text eol=lf
+Dockerfile    text eol=lf
+*.dockerfile  text eol=lf
+docker-compose*.yml text eol=lf
+*.py          text eol=lf
+*.env.example text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.onnx binary
+*.pth  binary
+*.pkl  binary
+*.mp4  binary
+*.avi  binary
+*.zip  binary
+*.tar  binary
+*.gz   binary
+
+*.ipynb text eol=lf

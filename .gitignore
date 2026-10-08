@@ -1,0 +1,31 @@
+# .gitignore
+# Datasets live in ~/data, never in the repo
+data/
+archives/
+
+# Model weights ship as GitHub Release assets (worker config expects URL + sha256)
+models/*.onnx
+*.pth
+*.pkl
+
+# Secrets
+.env
+.env.*
+!.env.example
+infra/.env
+
+# Media
+*.mp4
+*.avi
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+venvs/
+.venv/
+
+# Editor / OS
+.DS_Store
+*.swp
