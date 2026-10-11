@@ -30,19 +30,9 @@ venvs/
 .DS_Store
 *.swp.python-version
 
-
-# Derived split artifacts — regenerate with `python -m apms_ml.splits`.
-# Only day_assignments.csv and split_summary.md are committed.
 ml/splits/index.csv
 ml/splits/same_lot_*.csv
 ml/splits/cross_*.csv
 ml/splits/weather_*.csv
 *.pt
 ml/notebooks/*.ipynb_checkpoints
-
-# Derived split artifacts — regenerate with `python -m apms_ml.splits`.
-# Only day_assignments.csv and split_summary.md are committed.
-ml/splits/index.csv
-ml/splits/same_lot_*.csv
-ml/splits/cross_*.csv
-ml/splits/weather_*.csv
