@@ -1,10 +1,17 @@
+# ml/apms_ml/methods/__init__.py
 """Method registry.
 
 A method takes a list of BGR patches and returns one score per patch in [0, 1],
 where higher means more likely OCCUPIED. Hard-label methods return 0.0 or 1.0.
 
 Registering by name keeps evaluate.py free of per-method branching, so adding
-Method B in Task 1.3 touches one line here and one new file.
+a method is one new file plus one line at the bottom of this one.
+
+ORDER IS LOAD-BEARING. Method modules do `from . import register`, which reads
+this module while it is still executing. Every name they need must be defined
+above the side-effect imports at the end of the file. Moving those imports up
+raises `ImportError: cannot import name 'register' from partially initialized
+module`. Do not add an import of a method module anywhere but the final block.
 """
 from __future__ import annotations
 
@@ -41,4 +48,8 @@ def available() -> list[str]:
     return sorted(_FACTORIES)
 
 
-from . import threshold_a  # noqa: E402,F401  (import registers the method)
+# Side-effect imports. Must stay last. Each module calls register() at import
+# time. One line per method, no duplicates — a duplicate import is harmless
+# (sys.modules caches it) but reads as a second registration that never happens.
+from . import threshold_a  # noqa: E402,F401
+from . import mobilenet_b  # noqa: E402,F401

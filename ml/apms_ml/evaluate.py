@@ -124,13 +124,15 @@ def run_latency(method, rows: list[dict]) -> tuple[float | None, float | None]:
         print(f"  latency skipped: only {len(batch)} readable patches")
         return None, None
 
+    # Methods that manage their own thread pool expose a pinned variant.
+    predict = getattr(method, "predict_single_thread", method.predict)
     for _ in range(LATENCY_WARMUP_BATCHES):
-        method.predict(batch)
+        predict(batch)
 
     per_slot_ms: list[float] = []
     for _ in range(LATENCY_TIMED_BATCHES):
         start = time.perf_counter()
-        method.predict(batch)
+        predict(batch)
         elapsed = time.perf_counter() - start
         per_slot_ms.append(elapsed * 1000.0 / LATENCY_BATCH_SIZE)
 
