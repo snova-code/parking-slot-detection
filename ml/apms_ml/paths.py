@@ -15,6 +15,8 @@ SPLITS_DIR = ML_DIR / "splits"
 INDEX_CSV = SPLITS_DIR / "index.csv"
 DAY_ASSIGNMENTS_CSV = SPLITS_DIR / "day_assignments.csv"
 SUMMARY_MD = SPLITS_DIR / "split_summary.md"
+RESULTS_DIR = ML_DIR / "results"
+RESULTS_CSV = RESULTS_DIR / "results.csv"
 
 
 def data_root() -> Path:
