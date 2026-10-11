@@ -10,6 +10,14 @@ from pathlib import Path
 
 OUT = Path(__file__).parent / "train_colab.ipynb"
 
+# Pinned to match ml/requirements.txt. The parity check at the end of training
+# must run against the same runtime version as the local re-check, or a pass
+# here means nothing there.
+ORT_PIN = "onnxruntime==1.30.0"
+ONNX_PIN = "onnx==1.22.0"
+
+DRIVE_DIR = "/content/drive/MyDrive/apms"
+
 CELLS = [
     ("markdown", [
         "# APMS v2 — Method B training launcher\n",
@@ -18,21 +26,43 @@ CELLS = [
         "`ml/train/train_mobilenetv3.py`, shipped inside the package zip.\n",
         "\n",
         "Runtime > Change runtime type > **T4 GPU** before running.\n",
+        "\n",
+        "If the runtime disconnects, re-run every cell. Training resumes from\n",
+        "`runs/last.pt` on Drive; it does not restart from epoch 0.\n",
     ]),
-    ("code", ["!pip -q install onnx onnxruntime\n",
-              "!nvidia-smi --query-gpu=name,memory.total --format=csv\n"]),
-    ("code", ["from google.colab import drive\n",
-              "drive.mount('/content/drive')\n"]),
-    ("code", ["PACKAGE = '/content/drive/MyDrive/apms/apms_train_package.zip'\n",
-              "!rm -rf /content/pkg && mkdir -p /content/pkg\n",
-              "!unzip -q '{PACKAGE}' -d /content/pkg\n".replace("{PACKAGE}", "' + PACKAGE + '")
-              .replace("!unzip -q '' + PACKAGE + '", "!unzip -q '$PACKAGE'"),
-              "!cat /content/pkg/PACKAGE.json\n"]),
-    ("code", ["!python /content/pkg/train_mobilenetv3.py \\\n",
-              "    --package-dir /content/pkg \\\n",
-              "    --out-dir /content/drive/MyDrive/apms/runs \\\n",
-              "    --epochs 12 --batch-size 128\n"]),
-    ("code", ["!ls -la /content/drive/MyDrive/apms/runs\n"]),
+    ("code", [
+        f"!pip -q install {ONNX_PIN} {ORT_PIN}\n",
+        "!nvidia-smi --query-gpu=name,memory.total --format=csv\n",
+    ]),
+    ("code", [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')\n",
+    ]),
+    ("code", [
+        "import pathlib, subprocess, json\n",
+        "\n",
+        f"DRIVE_DIR = '{DRIVE_DIR}'\n",
+        "PACKAGE   = f'{DRIVE_DIR}/apms_train_package.zip'\n",
+        "PKG_DIR   = '/content/pkg'\n",
+        "\n",
+        "assert pathlib.Path(PACKAGE).is_file(), f'not found: {PACKAGE}'\n",
+        "\n",
+        "subprocess.run(['rm', '-rf', PKG_DIR], check=True)\n",
+        "subprocess.run(['mkdir', '-p', PKG_DIR], check=True)\n",
+        "subprocess.run(['unzip', '-q', PACKAGE, '-d', PKG_DIR], check=True)\n",
+        "\n",
+        "print(json.dumps(json.loads(\n",
+        "    (pathlib.Path(PKG_DIR) / 'PACKAGE.json').read_text()), indent=2))\n",
+    ]),
+    ("code", [
+        "!python /content/pkg/train_mobilenetv3.py \\\n",
+        "    --package-dir /content/pkg \\\n",
+        f"    --out-dir {DRIVE_DIR}/runs \\\n",
+        "    --epochs 12 --batch-size 128 --resume\n",
+    ]),
+    ("code", [
+        f"!ls -la {DRIVE_DIR}/runs\n",
+    ]),
 ]
 
 
