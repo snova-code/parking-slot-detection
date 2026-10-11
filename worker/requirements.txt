@@ -1,0 +1,9 @@
+# worker/requirements.txt
+# onnxruntime, never torch — 02_ARCHITECTURE.md. ~15MB vs 200MB+ on a 4GB VPS.
+# opencv-python-headless, never opencv-python — the worker must not be able to
+# open a window even by accident.
+onnxruntime==1.30.0
+opencv-python-headless==4.14.0.94
+numpy==2.5.3
+httpx==0.28.1
+pydantic==2.13.5

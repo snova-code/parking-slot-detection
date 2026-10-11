@@ -1,0 +1,10 @@
+# server/requirements.txt
+# Django 5.2 LTS (security support to April 2028), not 6.1 — this artifact
+# gets read months after it is written.
+Django==5.2.17
+django-ninja==1.7.0
+psycopg[binary]==3.3.5
+redis==8.1.0
+gunicorn==26.2.0
+pytest==9.1.1
+pytest-django==4.14.0
