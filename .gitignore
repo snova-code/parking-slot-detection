@@ -28,4 +28,4 @@ venvs/
 
 # Editor / OS
 .DS_Store
-*.swp
+*.swp.python-version

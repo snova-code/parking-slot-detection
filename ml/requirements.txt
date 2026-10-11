@@ -1,0 +1,18 @@
+# ml/requirements.txt
+# torch comes from PyTorch's CPU index. Installing plain `torch` from PyPI on
+# Linux pulls ~3GB of nvidia-* CUDA wheels you have no GPU for.
+# onnxruntime and OpenCV are pinned to the same versions as worker/ so the
+# ONNX parity check in 06_ENV_SETUP.md §7 actually proves something.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu
+onnx==1.22.0
+onnxruntime==1.30.0
+opencv-python==4.14.0.94
+numpy==2.5.3
+pandas==3.0.5
+scikit-learn==1.9.1
+matplotlib==3.11.2
+tqdm==4.70.1
+nbstripout==0.9.1
