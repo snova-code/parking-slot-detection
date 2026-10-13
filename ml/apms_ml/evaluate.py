@@ -237,14 +237,14 @@ def main() -> int:
     group.add_argument("--split")
     group.add_argument("--all-test", action="store_true",
                        help=f"run every test split: {', '.join(TEST_SPLITS)}")
+    parser.add_argument("--dump-scores", action="store_true",
+                    help="cache per-patch scores for the smoothing sweep")
     parser.add_argument("--limit", type=int, default=None,
                         help="smoke-test on the first N rows; forces --no-write")
     parser.add_argument("--workers", type=int, default=6,
                         help="image-decode threads for the accuracy pass")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--notes", default="")
-    parser.add_argument("--dump-scores", action="store_true",
-                    help="cache per-patch scores for the smoothing sweep")
     args = parser.parse_args()
 
     write = not args.no_write
