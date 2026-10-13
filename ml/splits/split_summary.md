@@ -12,13 +12,13 @@ committed — the per-split CSVs are derived and gitignored.
 | `same_lot_train` | 22 | 44,096 | 33,288 | 77,384 | 0.430 |
 | `same_lot_val` | 5 | 10,901 | 6,117 | 17,018 | 0.359 |
 | `same_lot_test` | 3 | 4,721 | 6,720 | 11,441 | 0.587 |
-| `cross_lot_test` | 0 | 0 | 0 | 0 | n/a |
+| `cross_lot_test` | 38 | 229,994 | 194,229 | 424,223 | 0.458 |
 | `cross_dataset_test` | 23 | 65,658 | 79,307 | 144,965 | 0.547 |
 | `weather_sunny` | 0 | 157,381 | 157,140 | 314,521 | 0.500 |
 | `weather_cloudy` | 0 | 114,057 | 79,657 | 193,714 | 0.411 |
 | `weather_rainy` | 0 | 31,636 | 61,578 | 93,214 | 0.661 |
 
-Days held out of every split (`unassigned`): 71
+Days held out of every split (`unassigned`): 0
 
 Weather views overlap the test splits by design and exclude every
 training and validation day. They carry a `lot` column, so a mixed

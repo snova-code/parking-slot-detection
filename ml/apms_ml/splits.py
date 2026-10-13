@@ -18,10 +18,12 @@ from collections import defaultdict
 from pathlib import Path
 
 from .paths import DAY_ASSIGNMENTS_CSV, INDEX_CSV, SPLITS_DIR, SUMMARY_MD
+# ml/apms_ml/splits.py  — replace the constants block
 
 SPLIT_SEED = 20260101
 SAME_LOT = "UFPR04"
-CROSS_LOT = "PUCPR"
+CROSS_LOT = "PUC"          # PKLotSegmented names it PUC, not PUCPR
+HELD_OUT_LOTS = {"UFPR05"} # present in PKLot, deliberately unused in Phase 1
 TRAIN_FRAC = 0.70
 VAL_FRAC = 0.15
 
@@ -104,19 +106,23 @@ def assign_same_lot(day_items: list[tuple[tuple, int, str]], rng: random.Random)
 
     return assignment, notes
 
-
 def build_assignments(days: dict) -> tuple[dict, list[str]]:
     rng = random.Random(SPLIT_SEED)
     assignment: dict[tuple, str] = {}
+
+    lots_in_index = {key[1] for key in days}
+    for required in (SAME_LOT, CROSS_LOT):
+        if required not in lots_in_index:
+            raise SystemExit(
+                f"Lot {required!r} is not in the index. Lots present: "
+                f"{sorted(lots_in_index)}. Fix the constant, do not rename the data."
+            )
 
     same_lot_items = [
         (key, entry["n"], _dominant_weather(entry))
         for key, entry in days.items()
         if key[0] == "pklot" and key[1] == SAME_LOT
     ]
-    if not same_lot_items:
-        raise SystemExit(f"No {SAME_LOT} days in the index — cannot build same-lot splits.")
-
     same_lot_assignment, notes = assign_same_lot(same_lot_items, rng)
     assignment.update(same_lot_assignment)
 
@@ -127,11 +133,15 @@ def build_assignments(days: dict) -> tuple[dict, list[str]]:
             assignment[key] = "cross_dataset_test"
         elif key[1] == CROSS_LOT:
             assignment[key] = "cross_lot_test"
+        elif key[1] in HELD_OUT_LOTS:
+            assignment[key] = "held_out"
         else:
-            assignment[key] = "unassigned"
+            raise SystemExit(
+                f"Day {key} has lot {key[1]!r}, which matches no split rule. "
+                "Add it to HELD_OUT_LOTS deliberately or give it a split."
+            )
 
     return assignment, notes
-
 
 def write_assignments(days: dict, assignment: dict) -> None:
     with open(DAY_ASSIGNMENTS_CSV, "w", newline="", encoding="utf-8") as handle:
