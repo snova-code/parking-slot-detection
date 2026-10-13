@@ -28,7 +28,7 @@ import numpy as np
 
 from .metrics import Confusion
 from .methods import available, build
-from .paths import RESULTS_CSV, RESULTS_DIR, SPLITS_DIR
+from .paths import RESULTS_CSV, RESULTS_DIR, SCORES_DIR, SPLITS_DIR
 
 TEST_SPLITS = ["same_lot_test", "cross_lot_test", "cross_dataset_test",
                "weather_sunny", "weather_cloudy", "weather_rainy"]
@@ -44,7 +44,11 @@ RESULT_FIELDS = [
     "accuracy", "precision", "recall", "specificity", "f1",
     "false_vacancy_rate", "miss_rate", "balanced_accuracy",
     "latency_ms_per_slot_p50", "latency_ms_per_slot_p90",
-    "latency_batch_size", "model_size_bytes", "host_cpu", "notes",
+    "latency_batch_size", "model_size_bytes", "host_cpu",
+    "smoothing_window_m", "smoothing_min_agreement_n", "n_sequences",
+    "transitions_per_slot_per_hour", "truth_transitions_per_slot_per_hour",
+    "median_detection_lag_seconds", "smoothing_overhead_ms_per_slot",
+    "notes",
 ]
 
 
@@ -89,25 +93,30 @@ def chunk(sequence: list, size: int):
         yield sequence[start:start + size]
 
 
-def run_accuracy(method, rows: list[dict], workers: int) -> tuple[Confusion, int]:
+def run_accuracy(method, rows: list[dict], workers: int,
+                 score_sink=None) -> tuple[Confusion, int]:
     confusion = Confusion()
     unreadable = 0
     done = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for block in chunk(rows, 2048):
             images = list(pool.map(load_patch, (r["path"] for r in block)))
-            patches, truths = [], []
+            patches, truths, kept = [], [], []
             for row, image in zip(block, images, strict=True):
                 if image is None:
                     unreadable += 1
                     continue
                 patches.append(image)
                 truths.append(int(row["label"]))
+                kept.append(row)
             if not patches:
                 continue
             scores = method.predict(patches)
             predictions = (np.asarray(scores) >= DECISION_THRESHOLD).astype(int)
             confusion.update_many(truths, predictions)
+            if score_sink is not None:
+                for row, score in zip(kept, np.asarray(scores), strict=True):
+                    score_sink.writerow([row["path"], f"{float(score):.6f}"])
             done += len(block)
             print(f"\r  {done:,}/{len(rows):,}", end="", flush=True)
     print()
@@ -143,6 +152,19 @@ def run_latency(method, rows: list[dict]) -> tuple[float | None, float | None]:
 
 def append_result(row: dict) -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    if RESULTS_CSV.exists():
+        with open(RESULTS_CSV, newline="", encoding="utf-8") as handle:
+            existing_header = next(csv.reader(handle), [])
+        if existing_header and existing_header != RESULT_FIELDS:
+            raise SystemExit(
+                f"{RESULTS_CSV} was written with a different column set.\n"
+                "Columns changed, so every row must be regenerated:\n"
+                f"  rm {RESULTS_CSV}\n"
+                "  python -m apms_ml.evaluate --method threshold_a --all-test\n"
+                "  python -m apms_ml.evaluate --method mobilenet_b --all-test\n"
+                "  python -m apms_ml.smoothing --apply --m <M> --n <N> --all-test\n"
+                "Never patch the header by hand."
+            )
     is_new = not RESULTS_CSV.exists()
     with open(RESULTS_CSV, "a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS,
@@ -153,13 +175,22 @@ def append_result(row: dict) -> None:
                          for k in RESULT_FIELDS})
 
 
-def evaluate_one(method, split: str, limit: int | None,
-                 workers: int, write: bool, notes: str) -> None:
+def evaluate_one(method, split: str, limit: int | None, workers: int,
+                 write: bool, notes: str, dump_scores: bool) -> None:
     rows = read_split_rows(split, limit)
     print(f"\n=== {method.name} on {split} ({len(rows):,} patches) ===")
 
     started = time.perf_counter()
-    confusion, unreadable = run_accuracy(method, rows, workers)
+    if dump_scores:
+        SCORES_DIR.mkdir(parents=True, exist_ok=True)
+        score_path = SCORES_DIR / f"{method.name}__{split}.csv"
+        with open(score_path, "w", newline="", encoding="utf-8") as handle:
+            sink = csv.writer(handle)
+            sink.writerow(["path", "score"])
+            confusion, unreadable = run_accuracy(method, rows, workers, sink)
+        print(f"  scores -> {score_path}")
+    else:
+        confusion, unreadable = run_accuracy(method, rows, workers, None)
     print(f"  accuracy pass: {time.perf_counter() - started:.1f}s, "
           f"{unreadable} unreadable")
 
@@ -212,6 +243,8 @@ def main() -> int:
                         help="image-decode threads for the accuracy pass")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--notes", default="")
+    parser.add_argument("--dump-scores", action="store_true",
+                    help="cache per-patch scores for the smoothing sweep")
     args = parser.parse_args()
 
     write = not args.no_write
@@ -227,7 +260,7 @@ def main() -> int:
     method = build(args.method)
     splits = TEST_SPLITS if args.all_test else [args.split]
     for split in splits:
-        evaluate_one(method, split, args.limit, args.workers, write, args.notes)
+        evaluate_one(method, split, args.limit, args.workers, write, args.notes, args.dump_scores)
     return 0
 
 

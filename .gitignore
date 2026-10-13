@@ -36,3 +36,6 @@ ml/splits/cross_*.csv
 ml/splits/weather_*.csv
 *.pt
 ml/notebooks/*.ipynb_checkpoints
+
+# Cached per-patch scores — regenerate with `evaluate --dump-scores`
+ml/results/scores/
