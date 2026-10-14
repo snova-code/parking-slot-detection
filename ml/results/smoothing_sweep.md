@@ -2,7 +2,7 @@
 
 Split: `same_lot_val` (validation; selection on a test split would leak)
 
-Generated: 2026-10-14T09:26:24+0000 at commit `9696722-dirty`
+Generated: 2026-10-14T15:42:26+0000 at commit `fbe8f76`
 
 Causal window. Warm-up threshold scales as ceil((N/M)*w).
 Max gap 20 min; 60 breaks; 200 sequences over 17,018 patches.
