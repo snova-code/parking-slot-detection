@@ -16,7 +16,42 @@ Authorization: Bearer apms_dev_<40-char-random>
 Issued once when a camera is created, shown once, stored hashed. Scoped to a
 single camera. If leaked, rotate the camera's token — blast radius is one camera.
 
-**Humans** use session auth for the dashboard.
+**Humans** use Django session auth. The active organization is chosen per
+session; the session stores only its id, and role is read from Membership on
+every request, so removal or demotion applies on the member's next request.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/auth/csrf` | none | sets `csrftoken` cookie |
+| POST | `/auth/login` | none, CSRF required | phone in any common format, normalised to E.164 |
+| POST | `/auth/logout` | session | 204 |
+| GET | `/auth/me` | session | user, memberships, active org |
+| PUT | `/auth/active-org` | session | 404 if not a member |
+| POST | `/cameras/{camera_id}/token:rotate` | OWNER | new token once, `Cache-Control: no-store`; old token invalid immediately |
+
+Every unsafe session request carries `X-CSRFToken` with the cookie's current
+value. Login rotates it.
+
+Default auth is "member of the active organization". An endpoint without an
+explicit `auth=` fails closed.
+
+**403 vs 404.** Cross-organization access returns 404, never confirming
+existence. Insufficient role within the caller's own organization returns 403
+`insufficient_role` — the resource is already visible to them.
+
+Error codes introduced: `csrf_failed`, `invalid_credentials`,
+`validation_failed`, `unauthenticated`, `no_membership`,
+`org_selection_required`, `insufficient_role`, `org_not_found`,
+`camera_not_found`.
+
+**Known gaps.** Lot and camera creation endpoints are not specified here, yet
+Phase 4 requires creating a lot entirely in the browser; they are added with
+Task 2.5. Until then `manage.py create_camera` issues cameras. Login rate
+limiting is added with the Redis-backed cache in Task 2.6, together with the
+worker limits above — a per-process cache would give each gunicorn worker its
+own counter.
+
+Interactive docs are served at `/api/v1/docs`.
 
 Never accept a device token on a human endpoint or vice versa.
 
