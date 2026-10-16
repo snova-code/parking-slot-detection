@@ -42,9 +42,19 @@ ZERO_PIXEL_THRESHOLD = 660
 _TOTAL_PIXELS = REFERENCE_SIZE[0] * REFERENCE_SIZE[1]
 
 
+# Set True only after the three VERIFY items above have been diffed against the
+# v1 source and any corrections committed. The flag is baked into `version`,
+# which is recorded in every results.csv row, so rows produced before
+# verification stay marked unverified permanently. Bump PORT_REVISION if the
+# diff changes any constant.
+V1_SOURCE_VERIFIED = False
+PORT_REVISION = 1
+
+
 class ThresholdBaseline:
     name = "threshold_a"
-    version = "v1-port-1"
+    version = (f"v1-port-{PORT_REVISION}-"
+               f"{'verified' if V1_SOURCE_VERIFIED else 'unverified'}")
     model_size_bytes = 0
 
     def predict(self, patches: list[np.ndarray]) -> np.ndarray:
