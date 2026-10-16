@@ -43,3 +43,19 @@ def make_member(db):
         return user
 
     return build
+
+@pytest.fixture
+def worker_settings(settings, tmp_path):
+    """A model card for make_tree's 'test-model' plus deterministic worker
+    settings. The smoothing numbers are arbitrary test values, not results."""
+    import json
+
+    card = {"version": "test-model", "onnx_sha256": "ab" * 32,
+            "input": {"shape": ["batch", 3, 96, 96]}}
+    (tmp_path / "test-model.json").write_text(json.dumps(card))
+    settings.MODEL_CARDS_DIR = tmp_path
+    settings.MODEL_URL_TEMPLATE = "https://models.example/{version}.onnx"
+    settings.SMOOTHING_WINDOW = 9
+    settings.SMOOTHING_MIN_AGREEMENT = 6
+    settings.TARGET_FPS = 2.0
+    return settings

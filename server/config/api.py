@@ -5,7 +5,7 @@ Schema at /api/v1/openapi.json, interactive docs at /api/v1/docs.
 
 Default auth is `any_member`: an endpoint that does not declare its auth
 requires a logged-in member of the active organization. Public endpoints must
-say `auth=None`, and worker endpoints override with the device-token class.
+say `auth=None`; the worker router overrides with the device-token class.
 Forgetting to declare auth fails closed.
 """
 from ninja import NinjaAPI
@@ -14,6 +14,7 @@ from accounts.api import router as auth_router
 from accounts.security import any_member
 from config.errors import install_error_handlers
 from parking.api import cameras_router
+from parking.worker_api import worker_router
 
 api = NinjaAPI(
     title="APMS v2",
@@ -26,3 +27,4 @@ install_error_handlers(api)
 
 api.add_router("/auth", auth_router)
 api.add_router("/cameras", cameras_router)
+api.add_router("/worker", worker_router)

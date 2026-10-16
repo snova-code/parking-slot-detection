@@ -154,6 +154,7 @@ class SlotState(TenantModel):
     status = models.CharField(max_length=16, choices=SlotStatus)
     confidence = models.DecimalField(max_digits=4, decimal_places=3, null=True, blank=True)
     since = models.DateTimeField()
+    last_observed_at = models.DateTimeField(null=True, blank=True)    
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -98,3 +98,38 @@ class ApiClient:
         response = self.post("/auth/login", {"phone_number": phone, "password": password})
         assert response.status_code == 200, response.content
         return response
+
+class WorkerClient:
+    """A worker: bearer token on every request, and Django's CSRF checks left
+    ON — every POST through this client proves bearer-authenticated requests
+    are not blocked by CsrfViewMiddleware."""
+
+    BASE = "/api/v1"
+
+    def __init__(self, token: str) -> None:
+        self.http = Client(enforce_csrf_checks=True)
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+    def get(self, path: str):
+        return self.http.get(self.BASE + path, headers=self.headers)
+
+    def post(self, path: str, body: dict):
+        return self.http.post(self.BASE + path, data=body,
+                              content_type="application/json", headers=self.headers)
+
+
+def worker_for(camera) -> WorkerClient:
+    return WorkerClient(give_token(camera))
+
+
+def event_payload(slot, **overrides) -> dict:
+    return {
+        "id": str(uuid.uuid4()),
+        "slot_id": str(slot.pk),
+        "previous_status": "VACANT",
+        "status": "OCCUPIED",
+        "confidence": 0.94,
+        "observed_at": timezone.now().isoformat(),
+        "model_version": "test-model",
+        **overrides,
+    }

@@ -32,6 +32,32 @@ def env_list(name: str) -> list[str]:
     return [item.strip() for item in env(name).split(",") if item.strip()]
 
 
+# --- Worker configuration, served by GET /worker/config ----------------------
+# Defaults exist for design choices, never for measured values. The smoothing
+# pair is a result from ml/results/smoothing_sweep.md, so it has no default.
+
+
+def _positive_int(name: str) -> int:
+    raw = env(name, required=True)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer, got {raw!r}") from exc
+    if value < 1:
+        raise ImproperlyConfigured(f"{name} must be at least 1, got {value}")
+    return value
+
+
+def _positive_float(name: str, default: str) -> float:
+    raw = env(name, default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be a number, got {raw!r}") from exc
+    if value <= 0:
+        raise ImproperlyConfigured(f"{name} must be positive, got {value}")
+    return value
+
 SECRET_KEY = env("DJANGO_SECRET_KEY", required=True)
 DEBUG = env_flag("DJANGO_DEBUG")
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS")
@@ -111,3 +137,20 @@ USE_TZ = True
 TIME_ZONE = "UTC"
 USE_I18N = False
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+SMOOTHING_WINDOW = _positive_int("APMS_SMOOTHING_WINDOW")
+SMOOTHING_MIN_AGREEMENT = _positive_int("APMS_SMOOTHING_MIN_AGREEMENT")
+if SMOOTHING_MIN_AGREEMENT > SMOOTHING_WINDOW:
+    raise ImproperlyConfigured(
+        "APMS_SMOOTHING_MIN_AGREEMENT cannot exceed APMS_SMOOTHING_WINDOW")
+
+# A design choice, not a measurement: occupancy changes over minutes
+# (04_API_CONTRACT.md).
+TARGET_FPS = _positive_float("APMS_TARGET_FPS", "2")
+
+MODEL_URL_TEMPLATE = env("APMS_MODEL_URL_TEMPLATE", required=True)
+if "{version}" not in MODEL_URL_TEMPLATE:
+    raise ImproperlyConfigured("APMS_MODEL_URL_TEMPLATE must contain {version}")
+
+# Model cards written by ml/train/train_mobilenetv3.py and committed to models/.
+MODEL_CARDS_DIR = Path(env("APMS_MODEL_CARDS_DIR") or BASE_DIR.parent / "models")
