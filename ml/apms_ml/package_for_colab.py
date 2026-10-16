@@ -15,29 +15,18 @@ import argparse
 import csv
 import io
 import json
-import subprocess
 import time
 import zipfile
 from collections import Counter
 from pathlib import Path
 
+from .provenance import git_commit
 from .paths import SPLITS_DIR, SUMMARY_MD, ML_DIR, data_root, pklot_segmented_root
 
 PACKAGE_SPLITS = ["same_lot_train", "same_lot_val"]
 TRAIN_SCRIPT = ML_DIR / "train" / "train_mobilenetv3.py"
 MANIFEST_FIELDS = ["dataset", "lot", "camera", "weather", "day",
                    "capture_datetime", "slot_id", "label", "rel_path"]
-
-
-def git_commit() -> str:
-    try:
-        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain"],
-                               capture_output=True, text=True, check=True).stdout.strip()
-        return f"{sha}-dirty" if dirty else sha
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
 
 
 def read_split(split: str) -> list[dict]:

@@ -1,301 +1,445 @@
 # ml/apms_ml/report.py
-"""Generate RESULTS.md from results.csv. Never hand-edit RESULTS.md.
+"""Generate RESULTS.md from results.csv. RESULTS.md is never edited by hand.
 
-Run:  python -m apms_ml.report
+Run:  python -m apms_ml.report           write ml/results/RESULTS.md
+      python -m apms_ml.report --check   exit 1 if the committed file is stale
 
-Every table in the output is derived from results/results.csv and
-splits/day_assignments.csv. Interpretation lives in RESULTS_PREAMBLE.md, which
-is hand-written and copied in verbatim at the top. The split is deliberate: a
-script cannot judge whether a number means anything, and a human should not be
-retyping numbers.
+Enforced here rather than trusted:
+  - every number comes from a results.csv row; a missing cell renders as TBD
+    and the command that produces it is listed
+  - rows stamped with a dirty or unknown commit are excluded
+  - one method_version per method across all splits
+  - one (M, N) for Method C across all splits
+  - the M=1 smoothing row must reproduce Method B's confusion matrix whenever
+    both cover the same patches
+  - the split leak checks are re-run at generation time
+  - Method A rows from an unverified port are marked and never presented as v1
 
-Refuses to emit if any row carries a dirty commit, so a reported figure always
-traces to a commit that exists.
+Any failure above is fatal: RESULTS.md is not written.
+
+Output is deterministic for a given results.csv and split set. No wall-clock
+time is written, so --check compares byte for byte.
+
+This file reports measurements. Interpretation belongs in the writeup.
 """
 from __future__ import annotations
 
+import argparse
+import contextlib
 import csv
-import sys
-from collections import defaultdict
-from pathlib import Path
+import io
+import json
+from collections import Counter
+from datetime import datetime
 
-from .paths import DAY_ASSIGNMENTS_CSV, RESULTS_CSV, SPLITS_DIR
+from .evaluate import TEST_SPLITS
+from .paths import REPO_ROOT, RESULTS_CSV, RESULTS_DIR, SPLITS_DIR
+from .splits import SPLIT_SEED
 
-HERE = Path(__file__).resolve().parent
-RESULTS_DIR = RESULTS_CSV.parent
-PREAMBLE_MD = RESULTS_DIR / "RESULTS_PREAMBLE.md"
-OUT_MD = RESULTS_DIR / "RESULTS.md"
+RESULTS_MD = RESULTS_DIR / "RESULTS.md"
+MODELS_DIR = REPO_ROOT / "models"
 
-# Splits in reporting order. Anything in the CSV but not here is still reported,
-# appended after these, so a new split cannot be silently dropped.
-TEST_SPLITS = ["same_lot_test", "cross_lot_test", "cross_dataset_test"]
-WEATHER_SPLITS = ["weather_sunny", "weather_cloudy", "weather_rainy"]
+CORE_SPLITS = ["same_lot_test", "cross_lot_test", "cross_dataset_test"]
+WEATHER_ROWS = [("Sunny", "weather_sunny"),
+                ("Overcast", "weather_cloudy"),
+                ("Rainy", "weather_rainy")]
 
-METHOD_LABELS = {"threshold_a": "A", "mobilenet_b": "B"}
+TBD = "TBD"
+DAGGER = "†"
+STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
 
-REQUIRED_COLUMNS = [
-    "run_at", "git_commit", "method", "method_version", "split",
-    "n_samples", "tp", "fp", "tn", "fn", "occupied_share",
-    "accuracy", "precision", "recall", "specificity", "f1",
-    "false_vacancy_rate", "balanced_accuracy",
-    "latency_ms_per_slot_p50", "latency_ms_per_slot_p90",
-    "latency_batch_size", "model_size_bytes", "host_cpu",
-]
+CMD_A = "python -m apms_ml.evaluate --method threshold_a --all-test"
+CMD_B = "python -m apms_ml.evaluate --method mobilenet_b --all-test --dump-scores"
+CMD_C1 = "python -m apms_ml.smoothing --apply --m 1 --n 1 --all-test"
+
+
+# ------------------------------------------------------------ formatting ----
+def num(row: dict | None, key: str) -> float | None:
+    if row is None:
+        return None
+    value = row.get(key, "")
+    return None if value in ("", None) else float(value)
+
+
+def pct(value: float | None) -> str:
+    return TBD if value is None else f"{value * 100:.2f}%"
+
+
+def pp(value: float | None) -> str:
+    return TBD if value is None else f"{value * 100:+.2f} pp"
+
+
+def fixed(value: float | None, places: int) -> str:
+    return TBD if value is None else f"{value:.{places}f}"
+
+
+def megabytes(value: float | None) -> str:
+    if value is None:
+        return TBD
+    return "0" if value == 0 else f"{value / 1e6:.2f} MB"
+
+
+def md_table(headers: list[str], body: list[list[str]]) -> list[str]:
+    lines = ["| " + " | ".join(headers) + " |",
+             "|" + "|".join([":---"] + ["---:"] * (len(headers) - 1)) + "|"]
+    lines += ["| " + " | ".join(row) + " |" for row in body]
+    return lines
+
+
+# ------------------------------------------------------------- selection ----
+def stamp(row: dict) -> datetime:
+    return datetime.strptime(row["run_at"], STAMP_FORMAT)
 
 
 def load_rows() -> list[dict]:
     if not RESULTS_CSV.exists():
-        raise SystemExit(f"{RESULTS_CSV} missing — run `apms_ml.evaluate --all-test` first.")
-
+        raise SystemExit(f"{RESULTS_CSV} missing — run the evaluations first.")
     with open(RESULTS_CSV, newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
-        if missing:
-            raise SystemExit(
-                f"{RESULTS_CSV} is missing columns: {missing}\n"
-                "The column set changed. Regenerate results.csv rather than patching it."
-            )
-        rows = list(reader)
-
-    if not rows:
-        raise SystemExit(f"{RESULTS_CSV} has a header but no rows.")
-
-    dirty = sorted({r["git_commit"] for r in rows if "dirty" in r["git_commit"]})
-    if dirty:
-        raise SystemExit(
-            "Refusing to generate RESULTS.md: these commits are dirty and the "
-            f"rows are not reproducible: {dirty}\n"
-            "Commit, delete results.csv, and re-run the benchmark."
-        )
-    return rows
+        return list(csv.DictReader(handle))
 
 
-def latest_per_key(rows: list[dict]) -> dict[tuple[str, str], dict]:
-    """One row per (method, split). Later run_at wins, so a re-run supersedes
-    an earlier one without needing the CSV to be edited."""
-    best: dict[tuple[str, str], dict] = {}
-    seen: dict[tuple[str, str], int] = defaultdict(int)
+def select(rows: list[dict]) -> tuple[dict[tuple, dict], int]:
+    """Latest clean row per key. Method C is keyed on (M, N) as well, so the
+    M=1 baseline and the chosen pair coexist."""
+    latest: dict[tuple, dict] = {}
+    excluded = 0
     for row in rows:
-        key = (row["method"], row["split"])
-        seen[key] += 1
-        if key not in best or row["run_at"] > best[key]["run_at"]:
-            best[key] = row
-    for key, count in sorted(seen.items()):
-        if count > 1:
-            print(f"  note: {count} rows for {key[0]} on {key[1]}; using latest "
-                  f"({best[key]['run_at']})", file=sys.stderr)
-    return best
-
-
-def f(row: dict, column: str, places: int = 4) -> str:
-    raw = (row.get(column) or "").strip()
-    if not raw:
-        return "—"
-    try:
-        return f"{float(raw):.{places}f}"
-    except ValueError:
-        return raw
-
-
-def i(row: dict, column: str) -> str:
-    raw = (row.get(column) or "").strip()
-    if not raw:
-        return "—"
-    try:
-        return f"{int(float(raw)):,}"
-    except ValueError:
-        return raw
-
-
-def day_counts() -> dict[str, int]:
-    if not DAY_ASSIGNMENTS_CSV.exists():
-        return {}
-    counts: dict[str, int] = defaultdict(int)
-    with open(DAY_ASSIGNMENTS_CSV, newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            counts[row["split"]] += 1
-    return dict(counts)
-
-
-def split_sizes() -> dict[str, int]:
-    """Patch counts straight off the split manifests, so the day table's
-    patches-per-day column is measured rather than inferred."""
-    sizes: dict[str, int] = {}
-    for path in sorted(SPLITS_DIR.glob("*.csv")):
-        name = path.stem
-        if name in ("index", "day_assignments"):
+        commit = row.get("git_commit", "")
+        if commit.endswith("-dirty") or commit in ("", "unknown"):
+            excluded += 1
             continue
-        with open(path, newline="", encoding="utf-8") as handle:
-            sizes[name] = max(sum(1 for _ in handle) - 1, 0)
-    return sizes
+        if row["method"] == "smoothed_c":
+            key = ("smoothed_c", row["split"],
+                   int(row["smoothing_window_m"]),
+                   int(row["smoothing_min_agreement_n"]))
+        else:
+            key = (row["method"], row["split"])
+        if key not in latest or stamp(row) > stamp(latest[key]):
+            latest[key] = row
+    return latest, excluded
 
 
-def table(header: list[str], aligns: list[str], body: list[list[str]]) -> list[str]:
-    sep = []
-    for a in aligns:
-        sep.append("---:" if a == "r" else ("---" if a == "l" else ":---:"))
-    lines = ["| " + " | ".join(header) + " |", "|" + "|".join(sep) + "|"]
-    lines += ["| " + " | ".join(r) + " |" for r in body]
-    return lines + [""]
+def organise(latest: dict[tuple, dict]):
+    a = {k[1]: r for k, r in latest.items() if k[0] == "threshold_a"}
+    b = {k[1]: r for k, r in latest.items() if k[0] == "mobilenet_b"}
+    c1 = {k[1]: r for k, r in latest.items() if k[0] == "smoothed_c" and k[2] == 1}
+    cx: dict[str, dict] = {}
+    for key, row in latest.items():
+        if key[0] == "smoothed_c" and key[2] > 1:
+            if key[1] not in cx or stamp(row) > stamp(cx[key[1]]):
+                cx[key[1]] = row
+    return a, b, c1, cx
 
 
-def ordered_splits(best: dict, preferred: list[str]) -> list[str]:
-    present = {split for _method, split in best}
-    extra = sorted(s for s in present if s not in TEST_SPLITS + WEATHER_SPLITS)
-    return [s for s in preferred if s in present] + (
-        extra if preferred is TEST_SPLITS else [])
+# ---------------------------------------------------------------- checks ----
+def run_leak_check() -> tuple[bool | None, str]:
+    from . import verify
+
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            code = verify.main()
+    except SystemExit as exc:
+        return None, str(exc)
+    return code == 0, buffer.getvalue()
+
+
+def split_composition(split: str) -> str:
+    path = SPLITS_DIR / f"{split}.csv"
+    if not path.exists():
+        return "split file absent"
+    counts: Counter = Counter()
+    with open(path, newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            counts[row["lot"]] += 1
+    return " · ".join(f"{lot} {n:,}" for lot, n in sorted(counts.items()))
+
+
+def model_card(version: str | None) -> dict | None:
+    if not version:
+        return None
+    path = MODELS_DIR / f"{version}.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+# ----------------------------------------------------------------- build ----
+def build(rows: list[dict]) -> tuple[str, list[str], list[str], int]:
+    errors: list[str] = []
+    notes: list[str] = []
+    latest, excluded = select(rows)
+    a, b, c1, cx = organise(latest)
+
+    def single_version(label: str, group: dict) -> str | None:
+        versions = sorted({r["method_version"] for r in group.values()})
+        if len(versions) > 1:
+            errors.append(f"{label}: rows from several versions {versions}. "
+                          "Re-run that method on every split.")
+        return versions[0] if len(versions) == 1 else None
+
+    a_version = single_version("Method A", a)
+    b_version = single_version("Method B", b)
+
+    pairs = sorted({(int(r["smoothing_window_m"]), int(r["smoothing_min_agreement_n"]))
+                    for r in cx.values()})
+    if len(pairs) > 1:
+        errors.append(f"Method C: splits disagree on (M, N) {pairs}. "
+                      "Re-apply one pair to every split.")
+    chosen = pairs[0] if len(pairs) == 1 else None
+    a_verified = bool(a_version and a_version.endswith("-verified"))
+
+    identical: list[str] = []
+    for split in TEST_SPLITS:
+        brow, crow = b.get(split), c1.get(split)
+        if brow is None or crow is None:
+            continue
+        cells = ("tp", "fp", "tn", "fn")
+        b_cm = tuple(int(brow[k]) for k in cells)
+        c_cm = tuple(int(crow[k]) for k in cells)
+        b_n, c_n = int(brow["n_samples"]), int(crow["n_samples"])
+        if b_n == c_n:
+            if b_cm != c_cm:
+                errors.append(
+                    f"{split}: M=1 confusion {c_cm} differs from Method B {b_cm} "
+                    f"over the same {b_n:,} patches. Sequence reconstruction is "
+                    "wrong; no Method C number can be trusted."
+                )
+            else:
+                identical.append(split)
+        else:
+            notes.append(f"`{split}`: sequence reconstruction used {c_n:,} of "
+                         f"{b_n:,} patches; the other {b_n - c_n:,} lack a "
+                         "timestamp or slot id, so M=1 and B are not compared.")
+
+    leak_ok, leak_log = run_leak_check()
+    if leak_ok is None:
+        errors.append(f"split leak checks could not run: {leak_log}")
+    elif not leak_ok:
+        failing = [line.strip() for line in leak_log.splitlines() if "FAIL" in line]
+        errors.append("split leak checks failed: " + "; ".join(failing or ["see verify"]))
+
+    m_text = str(chosen[0]) if chosen else "<M>"
+    n_text = str(chosen[1]) if chosen else "<N>"
+    cmd_cx = f"python -m apms_ml.smoothing --apply --m {m_text} --n {n_text} --all-test"
+    missing: dict[str, list[str]] = {}
+    for command, group, splits in ((CMD_A, a, CORE_SPLITS), (CMD_B, b, TEST_SPLITS),
+                                   (CMD_C1, c1, TEST_SPLITS), (cmd_cx, cx, TEST_SPLITS)):
+        absent = [s for s in splits if s not in group]
+        if absent:
+            missing[command] = absent
+
+    label_a = "A: Threshold (v1)" + (f" {DAGGER}" if a and not a_verified else "")
+    label_b = "B: MobileNetV3-S"
+    label_c = f"C: B + {n_text}-of-{m_text} vote"
+
+    def core(row: dict | None) -> list[str]:
+        return [pct(num(row, k)) for k in ("accuracy", "balanced_accuracy",
+                                           "precision", "recall", "f1",
+                                           "false_vacancy_rate", "miss_rate")]
+
+    def delta(group: dict, split: str) -> str:
+        here = num(group.get(split), "balanced_accuracy")
+        base = num(group.get("same_lot_test"), "balanced_accuracy")
+        return pp(None if here is None or base is None else here - base)
+
+    def c_latency(split: str) -> str:
+        base = num(b.get(split), "latency_ms_per_slot_p50")
+        extra = num(cx.get(split), "smoothing_overhead_ms_per_slot")
+        return TBD if base is None or extra is None else f"{base:.3f} + {extra:.4f}"
+
+    rendered = [*a.values(), *b.values(), *c1.values(), *cx.values()]
+    as_of = max((r["run_at"] for r in rendered), key=lambda s: datetime.strptime(
+        s, STAMP_FORMAT)) if rendered else "no rows"
+
+    out: list[str] = [
+        "# APMS v2 — Benchmark results",
+        "",
+        "> Generated by `python -m apms_ml.report` from `ml/results/results.csv`.",
+        "> Do not edit — `python -m apms_ml.report --check` fails on any hand change.",
+        f"> Rebuild every row: `./scripts/regenerate_results.sh {m_text} {n_text}`",
+        "",
+        f"Latest run included: `{as_of}`. Split seed: `{SPLIT_SEED}`.",
+        "",
+    ]
+
+    if a and not a_verified:
+        out += [
+            f"> **{DAGGER} Method A is an unverified port.** Three constants in",
+            "> `ml/apms_ml/methods/threshold_a.py` are marked VERIFY and have not",
+            f"> been diffed against the v1 source. Rows marked {DAGGER} describe this",
+            "> port, not necessarily what v1 achieved. Do not quote them as the v1",
+            "> baseline.",
+            "",
+        ]
+
+    out += ["## Test sets", ""]
+    out += md_table(["Split", "Patches", "Occupied share"], [
+        [f"`{s}`",
+         TBD if (b.get(s) or a.get(s)) is None
+         else f"{int((b.get(s) or a.get(s))['n_samples']):,}",
+         pct(num(b.get(s) or a.get(s), "occupied_share"))]
+        for s in TEST_SPLITS
+    ])
+
+    out += ["", "## Same-lot — train UFPR04, test UFPR04 held-out days", ""]
+    out += md_table(
+        ["Method", "Acc", "Bal. acc", "P", "R", "F1", "False vacancy",
+         "Miss rate", "ms/slot (p50)", "Size"],
+        [
+            [label_a, *core(a.get("same_lot_test")),
+             fixed(num(a.get("same_lot_test"), "latency_ms_per_slot_p50"), 3),
+             megabytes(num(a.get("same_lot_test"), "model_size_bytes"))],
+            [label_b, *core(b.get("same_lot_test")),
+             fixed(num(b.get("same_lot_test"), "latency_ms_per_slot_p50"), 3),
+             megabytes(num(b.get("same_lot_test"), "model_size_bytes"))],
+            [label_c, *core(cx.get("same_lot_test")),
+             c_latency("same_lot_test"),
+             megabytes(num(b.get("same_lot_test"), "model_size_bytes"))],
+        ],
+    )
+
+    out += ["", "## Cross-lot — train UFPR04, test PUCPR", ""]
+    out += md_table(
+        ["Method", "Acc", "Bal. acc", "P", "R", "F1", "False vacancy",
+         "Miss rate", "Δ bal. acc vs same-lot"],
+        [[label, *core(group.get("cross_lot_test")), delta(group, "cross_lot_test")]
+         for label, group in ((label_a, a), (label_b, b), (label_c, cx))],
+    )
+
+    out += ["", "## Cross-dataset — train PKLot UFPR04, test CNR-EXT", ""]
+    out += md_table(
+        ["Method", "Acc", "Bal. acc", "F1", "False vacancy", "Δ bal. acc vs same-lot"],
+        [[label,
+          pct(num(group.get("cross_dataset_test"), "accuracy")),
+          pct(num(group.get("cross_dataset_test"), "balanced_accuracy")),
+          pct(num(group.get("cross_dataset_test"), "f1")),
+          pct(num(group.get("cross_dataset_test"), "false_vacancy_rate")),
+          delta(group, "cross_dataset_test")]
+         for label, group in ((label_a, a), (label_b, b), (label_c, cx))],
+    )
+
+    out += [
+        "", "## Weather — trained on UFPR04 only", "",
+        "Each condition pools every PKLot day not used for training or validation,",
+        "so a row mixes held-out UFPR04 days with PUCPR. Composition is shown; a",
+        "difference between rows can reflect lot mix as well as weather.", "",
+    ]
+    out += md_table(
+        ["Condition", "Composition", "B acc", "B bal. acc", "C acc", "C bal. acc"],
+        [[name, split_composition(split),
+          pct(num(b.get(split), "accuracy")), pct(num(b.get(split), "balanced_accuracy")),
+          pct(num(cx.get(split), "accuracy")), pct(num(cx.get(split), "balanced_accuracy"))]
+         for name, split in WEATHER_ROWS],
+    )
+
+    out += [
+        "", "## Flicker and detection lag", "",
+        "B is the M=1 row: the same code path as C with the vote disabled.", "",
+    ]
+    flicker_rows = []
+    for split in TEST_SPLITS:
+        truth = num(cx.get(split) or c1.get(split), "truth_transitions_per_slot_per_hour")
+        base = num(c1.get(split), "transitions_per_slot_per_hour")
+        smoothed = num(cx.get(split), "transitions_per_slot_per_hour")
+        reduction = None if base in (None, 0) or smoothed is None else 1 - smoothed / base
+        flicker_rows.append([
+            f"`{split}`", fixed(truth, 3), fixed(base, 3), fixed(smoothed, 3),
+            pct(reduction),
+            fixed(num(c1.get(split), "median_detection_lag_seconds"), 0),
+            fixed(num(cx.get(split), "median_detection_lag_seconds"), 0),
+        ])
+    out += md_table(["Split", "Ground truth /slot/h", "B /slot/h", "C /slot/h",
+                     "Reduction", "B lag p50 (s)", "C lag p50 (s)"], flicker_rows)
+
+    out += [
+        "", "## Definitions", "",
+        "- Positive class is OCCUPIED.",
+        "- **False vacancy** = FN / (FN + TN): of slots reported vacant, the fraction",
+        "  actually occupied. The driver-facing error.",
+        "- **Miss rate** = FN / (FN + TP) = 1 − recall.",
+        "- **Δ** is balanced accuracy in percentage points against the same method's",
+        "  same-lot result. Balanced, because occupied share differs between lots and",
+        "  plain accuracy moves with class balance alone.",
+        "- **Latency** is single-threaded, 50-patch batches, median of 30 timed runs",
+        "  after 5 warm-up batches, image decoding excluded. Method C's figure is",
+        "  B's inference plus the measured cost of the vote.",
+        "- **Flicker** is predicted state changes summed over per-slot sequences,",
+        "  divided by summed sequence duration. Sequences break at gaps over 20 min.",
+        "- **Lag** is seconds from a true transition to the first frame reflecting it.",
+        "  The smoothing window is causal; no future frames are used.",
+    ]
+
+    out += ["", "## Consistency checks, run at generation time", ""]
+    out.append("- Split leak checks (`python -m apms_ml.verify`): PASS")
+    out.append(f"- One model version per method across splits: PASS")
+    if identical:
+        out.append(f"- M=1 smoothing reproduces Method B's confusion matrix exactly on "
+                   f"{len(identical)} of {len(TEST_SPLITS)} test splits: "
+                   + ", ".join(f"`{s}`" for s in identical))
+    out += [f"- {note}" for note in notes]
+    out.append(f"- Rows excluded for a dirty or unknown commit: {excluded}")
+
+    out += ["", "## Provenance", ""]
+    prov = []
+    for label, group in ((label_a, a), (label_b, b), ("C: M=1 baseline", c1),
+                         (label_c, cx)):
+        versions = ", ".join(sorted({r["method_version"] for r in group.values()})) or TBD
+        commits = ", ".join(f"`{c}`" for c in sorted({r["git_commit"]
+                                                       for r in group.values()})) or TBD
+        prov.append([label, f"`{versions}`" if group else TBD, commits])
+    out += md_table(["Method", "Version", "Commits"], prov)
+
+    card = model_card(b_version)
+    if card:
+        out += [
+            "",
+            f"Method B model `{card['version']}`: sha256 `{card['onnx_sha256']}`, "
+            f"{card['onnx_bytes']:,} bytes, ONNX opset {card['onnx_opset']}, "
+            f"exporter `{card['onnx_exporter']}`. Model card: "
+            f"`models/{card['version']}.json`.",
+        ]
+    elif b_version:
+        notes.append(f"no model card at models/{b_version}.json")
+        out += ["", f"Method B model card `models/{b_version}.json` not found."]
+
+    if missing:
+        out += ["", "## Missing cells", "",
+                "Every TBD above is produced by one of these commands:", ""]
+        for command, splits in missing.items():
+            out.append(f"- `{command}` — missing for "
+                       + ", ".join(f"`{s}`" for s in splits))
+
+    out.append("")
+    tbd_count = sum(line.count(TBD) for line in out
+                    if line.startswith("|") and not line.startswith("| Method |"))
+    return "\n".join(out), errors, notes, tbd_count
 
 
 def main() -> int:
-    rows = load_rows()
-    best = latest_per_key(rows)
-    days = day_counts()
-    sizes = split_sizes()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
 
-    methods = [m for m in ("threshold_a", "mobilenet_b")
-               if any(k[0] == m for k in best)]
-    other = sorted({k[0] for k in best} - set(methods))
-    methods += other
+    content, errors, notes, tbd_count = build(load_rows())
 
-    out: list[str] = []
+    for note in notes:
+        print(f"NOTE: {note}")
+    if errors:
+        print("\nRefusing to write RESULTS.md:")
+        for error in errors:
+            print(f"  - {error}")
+        return 1
 
-    if PREAMBLE_MD.exists():
-        out.append(PREAMBLE_MD.read_text(encoding="utf-8").rstrip())
-        out.append("")
-    else:
-        out += ["# APMS v2 — Phase 1 results", "",
-                f"`{PREAMBLE_MD.name}` not found; tables only.", ""]
+    if args.check:
+        current = RESULTS_MD.read_text(encoding="utf-8") if RESULTS_MD.exists() else ""
+        if current != content:
+            print("RESULTS.md is stale or hand-edited. Run `python -m apms_ml.report`.")
+            return 1
+        print("RESULTS.md matches results.csv.")
+        return 0
 
-    out += ["<!-- Everything below this line is generated by apms_ml.report.",
-            "     Edit RESULTS_PREAMBLE.md or the CSV, never this file. -->", ""]
-
-    # ---- provenance -------------------------------------------------------
-    commits = sorted({r["git_commit"] for r in best.values()})
-    hosts = sorted({r["host_cpu"] for r in best.values()})
-    batches = sorted({r["latency_batch_size"] for r in best.values()})
-    runs = sorted(r["run_at"] for r in best.values())
-
-    out += ["## Provenance", ""]
-    out += table(
-        ["Field", "Value"], ["l", "l"],
-        [["rows reported", str(len(best))],
-         ["commit(s)", ", ".join(f"`{c}`" for c in commits)],
-         ["first run", runs[0]],
-         ["last run", runs[-1]],
-         ["host CPU", "; ".join(hosts)],
-         ["latency batch size", ", ".join(batches)],
-         ["source", f"`{RESULTS_CSV.name}`, generated by `apms_ml.report`"]])
-
-    # ---- methods ----------------------------------------------------------
-    out += ["## Methods", ""]
-    body = []
-    for method in methods:
-        row = next(r for (m, _s), r in best.items() if m == method)
-        body.append([METHOD_LABELS.get(method, "—"), f"`{method}`",
-                     f"`{row['method_version']}`", i(row, "model_size_bytes") + " bytes"])
-    out += table(["ID", "Method", "Version", "Model size"],
-                 ["l", "l", "l", "r"], body)
-
-    # ---- head to head -----------------------------------------------------
-    test_present = [s for s in TEST_SPLITS if any(k[1] == s for k in best)]
-    if len(methods) > 1 and test_present:
-        out += ["## Head-to-head: balanced accuracy", ""]
-        header = ["Split", "n"] + [f"{METHOD_LABELS.get(m, m)}" for m in methods]
-        body = []
-        for split in test_present:
-            row0 = next((best[(m, split)] for m in methods if (m, split) in best), None)
-            line = [f"`{split}`", i(row0, "n_samples") if row0 else "—"]
-            for method in methods:
-                r = best.get((method, split))
-                line.append(f(r, "balanced_accuracy") if r else "—")
-            body.append(line)
-        out += table(header, ["l", "r"] + ["r"] * len(methods), body)
-
-        out += ["## Head-to-head: false vacancy rate", "",
-                "Lower is better. False vacancy is a driver sent to an occupied bay.", ""]
-        body = []
-        for split in test_present:
-            line = [f"`{split}`"]
-            for method in methods:
-                r = best.get((method, split))
-                line.append(f(r, "false_vacancy_rate") if r else "—")
-            body.append(line)
-        out += table(["Split"] + [METHOD_LABELS.get(m, m) for m in methods],
-                     ["l"] + ["r"] * len(methods), body)
-
-    # ---- per method full tables -------------------------------------------
-    for method in methods:
-        label = METHOD_LABELS.get(method, method)
-        splits = [s for s in TEST_SPLITS + WEATHER_SPLITS if (method, s) in best]
-        extra = sorted(s for (m, s) in best
-                       if m == method and s not in TEST_SPLITS + WEATHER_SPLITS)
-        if not splits and not extra:
-            continue
-        out += [f"## Method {label} (`{method}`) — all splits", ""]
-        body = []
-        for split in splits + extra:
-            r = best[(method, split)]
-            body.append([
-                f"`{split}`", i(r, "n_samples"), f(r, "occupied_share"),
-                i(r, "tp"), i(r, "fp"), i(r, "tn"), i(r, "fn"),
-                f(r, "balanced_accuracy"), f(r, "accuracy"), f(r, "precision"),
-                f(r, "recall"), f(r, "specificity"), f(r, "false_vacancy_rate"),
-            ])
-        out += table(
-            ["Split", "n", "Occ share", "TP", "FP", "TN", "FN",
-             "Bal acc", "Acc", "Prec", "Recall", "Spec", "False vac"],
-            ["l"] + ["r"] * 12, body)
-
-    # ---- latency ----------------------------------------------------------
-    out += ["## Latency", ""]
-    body = []
-    for method in methods:
-        for split in [s for s in TEST_SPLITS + WEATHER_SPLITS if (method, s) in best]:
-            r = best[(method, split)]
-            body.append([METHOD_LABELS.get(method, method), f"`{split}`",
-                         f(r, "latency_ms_per_slot_p50"),
-                         f(r, "latency_ms_per_slot_p90"),
-                         r["latency_batch_size"]])
-    out += table(["Method", "Split", "p50 ms/slot", "p90 ms/slot", "Batch"],
-                 ["l", "l", "r", "r", "r"], body)
-
-    # ---- day coverage -----------------------------------------------------
-    if days:
-        out += ["## Split day coverage", "",
-                "Splits are day-atomic; the unit is `(dataset, lot, day)`.", ""]
-        body = []
-        for split in sorted(days, key=lambda s: (-days[s], s)):
-            n = sizes.get(split)
-            per = f"{n // days[split]:,}" if n and days[split] else "—"
-            body.append([f"`{split}`", f"{days[split]:,}",
-                         f"{n:,}" if n is not None else "—", per])
-        out += table(["Split", "Days", "Patches", "Patches/day"],
-                     ["l", "r", "r", "r"], body)
-
-    # ---- smoothing --------------------------------------------------------
-    smoothed = {k: r for k, r in best.items()
-                if (r.get("smoothing_window_m") or "").strip()}
-    out += ["## Method C — temporal smoothing", ""]
-    if smoothed:
-        body = []
-        for (method, split), r in sorted(smoothed.items()):
-            body.append([f"`{method}`", f"`{split}`",
-                         r["smoothing_window_m"], r["smoothing_min_agreement_n"],
-                         f(r, "balanced_accuracy"), f(r, "false_vacancy_rate"),
-                         f(r, "transitions_per_slot_per_hour", 3),
-                         f(r, "truth_transitions_per_slot_per_hour", 3),
-                         f(r, "median_detection_lag_seconds", 0)])
-        out += table(["Method", "Split", "M", "N", "Bal acc", "False vac",
-                      "Flicker/h", "Truth/h", "Lag p50 s"],
-                     ["l", "l", "r", "r", "r", "r", "r", "r", "r"], body)
-    else:
-        out += ["No smoothed rows in `results.csv`: smoothing was swept and not",
-                "applied. The sweep is the evidence; see `smoothing_sweep.md` and",
-                "the Method C section of the preamble.", ""]
-
-    OUT_MD.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
-    print(f"wrote {OUT_MD}")
-    print(f"  {len(best)} rows, {len(methods)} methods, commits: {', '.join(commits)}")
+    RESULTS_MD.write_text(content, encoding="utf-8")
+    print(f"wrote {RESULTS_MD}")
+    print(f"TBD cells remaining: {tbd_count}")
     return 0
 
 

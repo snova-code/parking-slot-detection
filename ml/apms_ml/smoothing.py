@@ -31,7 +31,8 @@ from datetime import datetime
 
 import numpy as np
 
-from .evaluate import TEST_SPLITS, append_result, git_commit, host_cpu
+from .evaluate import TEST_SPLITS, append_result
+from .provenance import git_commit, host_cpu
 from .metrics import Confusion
 from .paths import SCORES_DIR, SMOOTHING_SWEEP_MD, SPLITS_DIR
 

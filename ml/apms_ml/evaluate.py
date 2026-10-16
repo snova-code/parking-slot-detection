@@ -28,6 +28,7 @@ import numpy as np
 
 from .metrics import Confusion
 from .methods import available, build
+from .provenance import git_commit, host_cpu
 from .paths import RESULTS_CSV, RESULTS_DIR, SCORES_DIR, SPLITS_DIR
 
 TEST_SPLITS = ["same_lot_test", "cross_lot_test", "cross_dataset_test",
@@ -50,27 +51,6 @@ RESULT_FIELDS = [
     "median_detection_lag_seconds", "smoothing_overhead_ms_per_slot",
     "notes",
 ]
-
-
-def git_commit() -> str:
-    try:
-        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain"],
-                               capture_output=True, text=True, check=True).stdout.strip()
-        return f"{sha}-dirty" if dirty else sha
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
-
-def host_cpu() -> str:
-    try:
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            if line.startswith("model name"):
-                return line.split(":", 1)[1].strip()
-    except OSError:
-        pass
-    return platform.processor() or "unknown"
 
 
 def read_split_rows(split: str, limit: int | None) -> list[dict]:
