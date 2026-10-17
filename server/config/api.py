@@ -15,6 +15,7 @@ from accounts.security import any_member
 from config.errors import install_error_handlers
 from parking.api import cameras_router
 from parking.worker_api import worker_router
+from parking.api import cameras_router, lots_router
 
 api = NinjaAPI(
     title="APMS v2",
@@ -28,3 +29,4 @@ install_error_handlers(api)
 api.add_router("/auth", auth_router)
 api.add_router("/cameras", cameras_router)
 api.add_router("/worker", worker_router)
+api.add_router("/lots", lots_router)

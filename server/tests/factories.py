@@ -133,3 +133,14 @@ def event_payload(slot, **overrides) -> dict:
         "model_version": "test-model",
         **overrides,
     }
+
+def make_event(slot, camera, previous_status, status, observed_at,
+               confidence="0.900"):
+    from parking.models import OccupancyEvent
+
+    return OccupancyEvent.objects.for_org(slot.org_id).create(
+        id=uuid.uuid4(), slot=slot, camera=camera,
+        previous_status=previous_status, status=status,
+        confidence=Decimal(confidence), observed_at=observed_at,
+        model_version="test-model",
+    )

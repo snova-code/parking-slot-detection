@@ -190,16 +190,52 @@ data: {"at":"..."}
 Send a heartbeat comment every 20s to keep proxies from closing the connection.
 Backed by the Redis channel the ingest endpoint publishes to.
 
-### `GET /lots/{lot_id}/analytics`
-Query params: `from`, `to`, `bucket` (`hour` | `day`).
+
+### GET /lots/{lot_id}/analytics
+
+Query params: `from`, `to` (both RFC 3339 with offset, required), `bucket`
+(`hour` | `day`, default `hour`). Buckets align to the lot's local midnight or
+hour, not UTC. 422 `invalid_range` if `from` >= `to`; 422 `range_too_large`
+above 1000 buckets.
 
 ```json
 {
-  "occupancy_rate": [{ "bucket": "2026-09-01T10:00:00+05:45", "rate": 0.72 }],
-  "dwell_minutes": { "p50": 41, "p90": 137, "mean": 58 },
+  "lot_id": "…", "timezone": "Asia/Kathmandu", "bucket": "hour",
+  "slots_counted": 42, "observed_slot_days": 41.2,
+  "occupancy_rate": [{ "bucket": "2026-09-01T10:00:00+05:45", "rate": 0.72, "coverage": 0.98 }],
+  "dwell_minutes": { "p50": 41, "p90": 137, "mean": 58, "samples": 128 },
   "turnover_per_slot_per_day": 3.4
 }
 ```
+
+Definitions, all derived from one interval model in `parking/analytics.py`:
+
+- An **interval** runs between consecutive events for a slot and carries the
+  status observed at its start.
+- An interval is **unobserved** when the event closing it claims
+  `previous_status: UNKNOWN`, which only happens after a resync — so a gap of
+  unknown length sits inside it. Unobserved time is excluded from both sides of
+  every ratio.
+- **rate** = occupied observed seconds / all observed seconds in the bucket;
+  `null` when nothing was observed.
+- **coverage** = observed seconds / (active slots x bucket length). Read the
+  rate against it: a rate over 4% coverage is not a measurement.
+- **dwell** counts an occupancy only from an event claiming a VACANT
+  predecessor, paired with the next VACANT event. Samples are dropped when a
+  resync falls between the two, and open occupancies are not sampled (they
+  would bias the distribution downwards).
+- **turnover** = arrivals / `observed_slot_days`, so an outage lowers both
+  sides instead of only the numerator.
+
+This is deliberately pessimistic: a worker restart after three quiet hours
+discards those three hours. Recording camera outages (Task 2.6) would let this
+subtract only the outage window.
+
+### GET /lots/{lot_id}/slots
+
+Slots are nested under their camera, each camera carrying its own
+`reference_frame`. A polygon is never returned apart from the frame it was
+drawn against.
 
 ---
 

@@ -21,15 +21,12 @@ from parking.ingest import MAX_BATCH, IncomingEvent, ingest_events
 from parking.models import Camera
 from parking.security import device_token
 from parking.worker_config import build_config, resync_slot_ids
+from parking.schemas import ReferenceFrameOut
 
 worker_router = Router(tags=["worker"], auth=device_token)
 
 
 # ---------------------------------------------------------------- config ----
-class ReferenceFrameOut(Schema):
-    width: int
-    height: int
-
 
 class ModelOut(Schema):
     version: str
