@@ -235,9 +235,22 @@ event: heartbeat
 data: {"at":"..."}
 ```
 
-Send a heartbeat comment every 20s to keep proxies from closing the connection.
-Backed by the Redis channel the ingest endpoint publishes to.
+A camera with no heartbeat for `CAMERA_STALE_SECONDS` (default 90) is declared
+stale by `manage.py sweep_cameras --loop`: its active slots become UNKNOWN, a
+`CameraOutage` row records the window from its last heartbeat, and the change
+is published to the lot's stream. The outage is closed by the camera's next
+heartbeat, where the recovery time is exact.
 
+Analytics subtracts recorded outage windows rather than discarding whole
+intervals. A worker restart shorter than the stale threshold never becomes an
+outage, so up to that much unobserved time counts as observed — bounded and
+stated.
+
+Rate limits are enforced with counters in the Redis cache, shared across
+gunicorn workers. 429 carries the uniform error body with code `rate_limited`
+and a `Retry-After` header. The 5-streams-per-user cap returns 429
+`too_many_streams`; the check and the insert are not atomic, so a simultaneous
+burst can exceed it slightly — it bounds abandoned tabs, not attackers.
 
 ### GET /lots/{lot_id}/analytics
 

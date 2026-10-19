@@ -87,7 +87,24 @@ def sse_stream(lot: ParkingLot, user, token: str):
     try:
         with subscription(lot.pk) as pubsub:
             yield _json_frame("snapshot", snapshot(lot))
-            ...
+
+            while True:
+                if time.monotonic() >= deadline:
+                    yield _json_frame("closing", {"reason": "max_connection_seconds"})
+                    return
+                try:
+                    message = pubsub.get_message(timeout=POLL_SECONDS)
+                except redis.RedisError:
+                    logger.warning("stream lost the bus lot=%s", lot.pk, exc_info=True)
+                    yield _json_frame("closing", {"reason": "bus_unavailable"})
+                    return
+
+                if message and message.get("type") == "message":
+                    # Forwarded verbatim: re-encoding could only introduce a
+                    # difference between what was published and what is delivered.
+                    yield _frame("slot_update", message["data"])
+                    continue
+
                 if time.monotonic() >= next_heartbeat:
                     next_heartbeat = time.monotonic() + heartbeat_every
                     close_old_connections()
