@@ -177,7 +177,55 @@ browser can scale correctly. One scaling path, defined here, used everywhere.
 
 ### `GET /lots/{lot_id}/stream` — SSE
 
+Session cookie auth: EventSource cannot set headers, so the cookie is the only
+credential available. `SameSite=Lax` is what prevents a cross-origin page from
+opening a stream with the user's cookie attached.
+
+
+
+
 ```
+
+event: snapshot
+data: {“lot_id”:”…”,”slots”:[{“slot_id”:”…”,”status”:”UNKNOWN”,”confidence”:null,”since”:null,”at”:null}]}
+
+event: slot_update
+data: {“lot_id”:”…”,”camera_id”:”…”,”slots”:[{“slot_id”:”…”,”status”:”OCCUPIED”,”confidence”:0.94,”since”:”…”,”at”:”…”}]}
+
+event: heartbeat
+data: {“at”:”…”}
+
+event: closing
+data: {“reason”:”access_revoked”}
+
+
+A connection opens with a full `snapshot` of statuses, which removes the race
+between the initial `/slots` call and the first delta. Polygons are not
+repeated; they come from `GET /lots/{id}/slots`.
+
+`slot_update` carries **all** slots from one committed ingest batch, not one
+slot per frame. The batch is what committed atomically, so a client never
+paints a half-applied batch.
+
+`heartbeat` every 20s keeps proxies from closing an idle stream and is also
+when the server re-checks that the viewer is still a member of the
+organization and that the lot is still active. A revoked member's stream is
+ended with `closing` / `access_revoked`.
+
+A connection is capped at 30 minutes (`closing` / `max_connection_seconds`);
+EventSource reconnects and receives a fresh snapshot. There is no replay:
+pub/sub keeps no history, and a snapshot is a complete resync.
+
+503 `bus_unavailable` when Redis is unreachable at connect time; the stream
+also ends with `closing` / `bus_unavailable` if the bus dies mid-connection.
+Ingestion is unaffected either way — events are durable before anything is
+published.
+
+**Deployment requirement.** Each connection holds a worker thread for its
+lifetime. Run gunicorn with `--worker-class gthread --threads N`; concurrent
+viewers are bounded by threads, not sockets. The contract's "5 concurrent SSE
+connections per user" is enforced in Task 2.6b with the other rate limits.
+
 Content-Type: text/event-stream
 
 event: slot_update
