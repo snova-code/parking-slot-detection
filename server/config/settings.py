@@ -154,3 +154,10 @@ if "{version}" not in MODEL_URL_TEMPLATE:
 
 # Model cards written by ml/train/train_mobilenetv3.py and committed to models/.
 MODEL_CARDS_DIR = Path(env("APMS_MODEL_CARDS_DIR") or BASE_DIR.parent / "models")
+
+# --- Live updates ------------------------------------------------------------
+REDIS_URL = env("APMS_REDIS_URL", required=True)
+SSE_HEARTBEAT_SECONDS = _positive_float("APMS_SSE_HEARTBEAT_SECONDS", "20")
+# EventSource reconnects on its own, so capping a connection's life costs the
+# client nothing and stops threads being held forever by abandoned tabs.
+SSE_MAX_CONNECTION_SECONDS = _positive_float("APMS_SSE_MAX_CONNECTION_SECONDS", "1800")

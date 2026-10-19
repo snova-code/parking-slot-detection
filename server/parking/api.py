@@ -4,6 +4,7 @@ the active organization); only the owner-restricted route says otherwise.
 OPERATOR is read-only, which is exactly what these reads are.
 """
 from __future__ import annotations
+import redis
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -29,6 +30,13 @@ from parking.geometry import canonical_polygon
 from parking.models import SlotType
 from parking.versioning import slots_version
 from parking.worker_config import load_model_card
+
+from django.http import StreamingHttpResponse
+
+from parking.pubsub import client as redis_client
+from parking.stream import sse_stream
+from urllib.parse import urlencode
+
 
 cameras_router = Router(tags=["cameras"])
 lots_router = Router(tags=["lots"])

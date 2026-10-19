@@ -70,11 +70,12 @@ def test_existing_user_joins_without_touching_their_password(db, monkeypatch):
     assert user.check_password(STRONG)
 
 
-def test_create_camera_prints_only_the_token_on_stdout(make_tree):
+def test_create_camera_prints_only_the_token_on_stdout(make_tree, worker_settings):
     a = make_tree("alpha")
     out, err = run("create_camera", org="alpha", lot="North deck", name="North",
                    source_uri="file:///data/demo.mp4", frame="1280x720",
-                   model_version="mnv3s-test")
+                   model_version="test-model")
+
     token = out.strip()
     context = device_token(bearer(token))
     assert context is not None and context.camera.name == "North"
@@ -84,16 +85,21 @@ def test_create_camera_prints_only_the_token_on_stdout(make_tree):
     assert ParkingLot.objects.for_org(a.org).filter(name="North deck").exists()
 
 
-def test_create_camera_reuses_an_existing_lot(make_tree):
+def test_create_camera_reuses_an_existing_lot(make_tree, worker_settings):
     a = make_tree("alpha")
     run("create_camera", org="alpha", lot="alpha lot", name="Second",
-        source_uri="file:///data/demo.mp4", frame="1280x720", model_version="m")
+        source_uri="file:///data/demo.mp4", frame="1280x720",
+        model_version="test-model")
     assert ParkingLot.objects.for_org(a.org).filter(name="alpha lot").count() == 1
 
 
 @pytest.mark.parametrize("frame", ["1280", "0x720", "wide", "1280x-1"])
-def test_create_camera_rejects_bad_frames(make_tree, frame):
+def test_create_camera_rejects_bad_frames(make_tree, worker_settings, frame):
+    """worker_settings is required: without a resolvable model card the command
+    fails on the card check before it ever parses the frame, and this test
+    passes without testing anything."""
     make_tree("alpha")
-    with pytest.raises(CommandError):
+    with pytest.raises(CommandError, match="frame"):
         run("create_camera", org="alpha", lot="L", name="N",
-            source_uri="file:///x.mp4", frame=frame, model_version="m")
+            source_uri="file:///x.mp4", frame=frame,
+            model_version="test-model")

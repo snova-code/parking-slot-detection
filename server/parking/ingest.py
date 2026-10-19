@@ -43,6 +43,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from parking.models import Camera, OccupancyEvent, ParkingSlot, SlotState, SlotStatus
+from parking.pubsub import publish
 
 logger = logging.getLogger(__name__)
 
@@ -172,4 +173,25 @@ def _apply_to_states(camera: Camera, fresh: list[IncomingEvent],
     if changed:
         scoped.bulk_update(changed, ["status", "confidence", "since",
                                      "last_observed_at", "updated_at"])
+        _publish(camera, changed)
     result.changed_slot_ids = sorted(s.slot_id for s in changed)
+
+
+def _publish(camera: Camera, changed: list[SlotState]) -> None:
+    """One message per committed batch. Registered on_commit so a subscriber
+    can never see an update for a transaction that rolls back."""
+    message = {
+        "lot_id": str(camera.lot_id),
+        "camera_id": str(camera.pk),
+        "slots": [
+            {
+                "slot_id": str(state.slot_id),
+                "status": state.status,
+                "confidence": None if state.confidence is None else float(state.confidence),
+                "since": state.since.isoformat(),
+                "at": state.last_observed_at.isoformat() if state.last_observed_at else None,
+            }
+            for state in changed
+        ],
+    }
+    transaction.on_commit(lambda: publish(camera.lot_id, message))

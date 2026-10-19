@@ -11,6 +11,8 @@ from django.utils import timezone
 from accounts.models import Role
 from parking.models import ParkingSlot, SlotState
 from tests.factories import SQUARE, ApiClient, make_event
+from urllib.parse import urlencode
+
 
 KTM = ZoneInfo("Asia/Kathmandu")
 OWNER = "+9779811111111"
@@ -32,9 +34,11 @@ def api(make_tree, make_member):
 
 
 def fetch(client, lot, start, end, bucket="hour"):
-    response = client.get(
-        f"/lots/{lot.pk}/analytics?from={start.isoformat()}"
-        f"&to={end.isoformat()}&bucket={bucket}")
+    """Query params are urlencoded: isoformat() emits '+05:45' for Kathmandu,
+    and a raw '+' in a query string decodes as a space."""
+    query = urlencode({"from": start.isoformat(), "to": end.isoformat(),
+                       "bucket": bucket})
+    response = client.get(f"/lots/{lot.pk}/analytics?{query}")
     assert response.status_code == 200, response.content
     return response.json()
 
