@@ -25,6 +25,7 @@ from django.db.models import Q
 
 from config.errors import ApiError
 from parking.models import Camera, ParkingSlot, SlotStatus
+from parking.versioning import content_hash
 
 MODEL_VERSION_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -68,11 +69,6 @@ def load_model_card(version: str) -> dict:
     return card
 
 
-def config_hash(body: dict) -> str:
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
-
-
 def build_config(camera: Camera) -> dict:
     card = load_model_card(camera.model_version)
     _, _, height, width = card["input"]["shape"]
@@ -99,7 +95,7 @@ def build_config(camera: Camera) -> dict:
         "slots": [{"id": str(s["id"]), "label": s["label"], "polygon": s["polygon"]}
                   for s in slots],
     }
-    body["config_version"] = config_hash(body)
+    body["config_version"] = content_hash(body)
     return body
 
 
