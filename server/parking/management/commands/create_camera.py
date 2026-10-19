@@ -20,6 +20,8 @@ from django.db import transaction
 from accounts.models import Organization
 from parking.models import Camera, ParkingLot
 from parking.tokens import generate_device_token
+from config.errors import ApiError
+from parking.worker_config import load_model_card
 
 FRAME = re.compile(r"(\d+)x(\d+)")
 
@@ -47,6 +49,13 @@ class Command(BaseCommand):
         org = Organization.objects.filter(slug=options["org"]).first()
         if org is None:
             raise CommandError(f"No organization with slug {options['org']!r}.")
+        try:
+            load_model_card(options["model_version"])
+        except ApiError as exc:
+            raise CommandError(
+                f"No model card for {options['model_version']!r}: "
+                f"{exc.detail['reason']}. Put the card in MODEL_CARDS_DIR first."
+            ) from exc
         width, height = parse_frame(options["frame"])
         token, digest = generate_device_token()
 

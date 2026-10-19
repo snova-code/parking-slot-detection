@@ -241,17 +241,59 @@ drawn against.
 
 ## Slot management (annotation tool)
 
+
+## Lot and camera management (OWNER only)
+
+### `POST /lots`
+`name` (unique within the org, 409 `lot_name_taken`), optional address fields,
+optional `latitude`/`longitude` (both or neither), `timezone` (IANA, default
+`Asia/Kathmandu`, validated on write because analytics computes bucket
+boundaries in it).
+
+### `POST /lots/{lot_id}/cameras`
+`name`, `source_uri` (file/rtsp/rtsps/http/https), `reference_frame`,
+`model_version`. The version must have a model card on the server (422
+`unknown_model_version`) — the camera fails at creation rather than at the
+worker's first config poll. The device token is returned once, with
+`Cache-Control: no-store`.
+
+## Slot management (annotation tool)
+
 ### `POST /cameras/{camera_id}/slots:bulk`
-Replaces the slot set for a camera in one transaction.
 
 ```json
 {
+  "slots_version": "9c1f3a2b8d4e5f60",
   "reference_frame": { "width": 1280, "height": 720 },
-  "slots": [
-    { "label": "A-01", "polygon": [[120,340],[186,338],[190,382],[124,384]], "slot_type": "STANDARD" }
-  ]
+  "slots": [{ "label": "A-01", "polygon": [[120,340],[186,338],[190,382],[124,384]], "slot_type": "STANDARD" }]
 }
 ```
+
+`slots_version` is a hash of the camera's reference frame and active slots —
+exactly what this call replaces. It is read from `GET /lots/{id}/slots` and
+sent back; a mismatch is 409 `slots_version_conflict`, carrying
+`current_slots_version`. It is deliberately not the worker's `config_version`,
+which also covers settings-derived fields and would reject a save because an
+environment variable changed.
+
+Matching is by label within the camera. Absent labels are soft-deactivated
+(v1 deleted and orphaned its history). A label that was removed and is sent
+again becomes a **new** slot: the deactivated row keeps its events rather than
+having a re-drawn bay's events appended to it.
+
+Polygons are canonicalised server-side to clockwise order starting from the
+corner nearest the reference frame's top-left, and the stored form is
+returned. The worker maps point *i* of the quad to corner *i* of its 96x96
+crop, so order decides the patch's rotation; fixing it on the server means no
+client can produce a mirrored crop. 422 `invalid_polygon` for corners outside
+the frame, repeated corners, or an area under 16 px², naming the label; 422
+`duplicate_labels` for a repeated label in one payload.
+
+`reference_frame` replaces the camera's stored frame. That is safe because
+every active slot's polygon is in the payload, so no stored polygon is left in
+the old frame.
+
+`GET /lots/{lot_id}/slots` carries `slots_version` per camera.
 
 Soft-deactivate slots not present rather than hard-deleting them. v1 ran
 `DELETE FROM home_parkingslot` on every restart, orphaning all history. Setting

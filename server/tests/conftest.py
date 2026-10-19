@@ -59,3 +59,17 @@ def worker_settings(settings, tmp_path):
     settings.SMOOTHING_MIN_AGREEMENT = 6
     settings.TARGET_FPS = 2.0
     return settings
+
+@pytest.fixture
+def as_owner(make_member):
+    """A logged-in client for a new member of the given organization."""
+    from accounts.models import Role
+    from tests.factories import ApiClient
+
+    def build(org, phone: str = "+9779811111111", role=Role.OWNER) -> ApiClient:
+        make_member(org, role, phone)
+        api = ApiClient()
+        api.login(phone)
+        return api
+
+    return build
