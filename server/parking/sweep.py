@@ -25,6 +25,9 @@ from django.utils import timezone
 
 from parking.models import Camera, CameraOutage, SlotState, SlotStatus
 from parking.pubsub import publish_slot_states
+from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,15 @@ def sweep_stale_cameras(now=None) -> list[dict]:
     now = now or timezone.now()
     cutoff = now - timedelta(seconds=settings.CAMERA_STALE_SECONDS)
 
+    open_outage = CameraOutage.unscoped.filter(
+        camera=OuterRef("pk"), ended_at__isnull=True)
+
     candidates = (
         Camera.unscoped.select_related("lot")
         .filter(is_active=True, lot__is_active=True,
                 last_seen_at__isnull=False, last_seen_at__lt=cutoff)
-        .exclude(outages__ended_at__isnull=True)
+        .annotate(has_open_outage=Exists(open_outage))
+        .filter(has_open_outage=False)
         .order_by("last_seen_at")
     )
 

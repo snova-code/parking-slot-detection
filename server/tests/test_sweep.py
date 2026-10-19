@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import pytest
 
 from django.utils import timezone
 
@@ -94,6 +95,7 @@ def test_a_heartbeat_closes_the_outage(make_tree, settings, worker_settings):
     assert body["resync_slot_ids"] == [str(a.slot.pk)]
 
 
+@pytest.mark.django_db(transaction=True)
 def test_going_stale_reaches_an_open_stream(make_tree, as_owner, redis_bus,
                                             sse_settings, settings,
                                             django_capture_on_commit_callbacks):

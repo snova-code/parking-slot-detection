@@ -119,3 +119,19 @@ def sse_settings(settings):
     settings.SSE_HEARTBEAT_SECONDS = 0.2
     settings.SSE_MAX_CONNECTION_SECONDS = 5.0
     return settings
+
+@pytest.fixture(autouse=True)
+def _reset_throttles():
+    """django-ninja counts throttled requests in Django's cache, which outlives
+    a single test. Every test logs in as the same phone, so without this the
+    11th login in the run gets 429 and everything after it fails for a reason
+    that has nothing to do with what it was testing.
+
+    tests/test_rate_limits.py exercises the limiter deliberately; it starts
+    from a clean counter like everything else.
+    """
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()

@@ -73,12 +73,17 @@ def test_login_attempts_are_throttled_by_address(db, tight):
     refused = api.post("/auth/login", {"phone_number": PHONE, "password": PASSWORD})
     assert refused.status_code == 429
 
-
+@pytest.mark.django_db(transaction=True)
 def test_a_sixth_stream_is_refused(make_tree, as_owner, redis_bus, sse_settings, settings):
     settings.SSE_MAX_CONNECTIONS_PER_USER = 2
     a = make_tree("alpha")
     api = as_owner(a.org)
-    with open_stream(api, a.lot), open_stream(api, a.lot):
+    with open_stream(api, a.lot) as first, open_stream(api, a.lot) as second:
+        # The slot is released in the generator's finally, and a generator that
+        # was never advanced does not run its body on close. Reading the
+        # snapshot starts it, which is also what a real EventSource does.
+        next_event(first)
+        next_event(second)
         refused = api.get(f"/lots/{a.lot.pk}/stream")
         assert refused.status_code == 429
         assert refused.json()["error"]["code"] == "too_many_streams"
