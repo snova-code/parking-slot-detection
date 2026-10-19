@@ -16,7 +16,42 @@ Authorization: Bearer apms_dev_<40-char-random>
 Issued once when a camera is created, shown once, stored hashed. Scoped to a
 single camera. If leaked, rotate the camera's token — blast radius is one camera.
 
-**Humans** use session auth for the dashboard.
+**Humans** use Django session auth. The active organization is chosen per
+session; the session stores only its id, and role is read from Membership on
+every request, so removal or demotion applies on the member's next request.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/auth/csrf` | none | sets `csrftoken` cookie |
+| POST | `/auth/login` | none, CSRF required | phone in any common format, normalised to E.164 |
+| POST | `/auth/logout` | session | 204 |
+| GET | `/auth/me` | session | user, memberships, active org |
+| PUT | `/auth/active-org` | session | 404 if not a member |
+| POST | `/cameras/{camera_id}/token:rotate` | OWNER | new token once, `Cache-Control: no-store`; old token invalid immediately |
+
+Every unsafe session request carries `X-CSRFToken` with the cookie's current
+value. Login rotates it.
+
+Default auth is "member of the active organization". An endpoint without an
+explicit `auth=` fails closed.
+
+**403 vs 404.** Cross-organization access returns 404, never confirming
+existence. Insufficient role within the caller's own organization returns 403
+`insufficient_role` — the resource is already visible to them.
+
+Error codes introduced: `csrf_failed`, `invalid_credentials`,
+`validation_failed`, `unauthenticated`, `no_membership`,
+`org_selection_required`, `insufficient_role`, `org_not_found`,
+`camera_not_found`.
+
+**Known gaps.** Lot and camera creation endpoints are not specified here, yet
+Phase 4 requires creating a lot entirely in the browser; they are added with
+Task 2.5. Until then `manage.py create_camera` issues cameras. Login rate
+limiting is added with the Redis-backed cache in Task 2.6, together with the
+worker limits above — a per-process cache would give each gunicorn worker its
+own counter.
+
+Interactive docs are served at `/api/v1/docs`.
 
 Never accept a device token on a human endpoint or vice versa.
 
@@ -142,7 +177,55 @@ browser can scale correctly. One scaling path, defined here, used everywhere.
 
 ### `GET /lots/{lot_id}/stream` — SSE
 
+Session cookie auth: EventSource cannot set headers, so the cookie is the only
+credential available. `SameSite=Lax` is what prevents a cross-origin page from
+opening a stream with the user's cookie attached.
+
+
+
+
 ```
+
+event: snapshot
+data: {“lot_id”:”…”,”slots”:[{“slot_id”:”…”,”status”:”UNKNOWN”,”confidence”:null,”since”:null,”at”:null}]}
+
+event: slot_update
+data: {“lot_id”:”…”,”camera_id”:”…”,”slots”:[{“slot_id”:”…”,”status”:”OCCUPIED”,”confidence”:0.94,”since”:”…”,”at”:”…”}]}
+
+event: heartbeat
+data: {“at”:”…”}
+
+event: closing
+data: {“reason”:”access_revoked”}
+
+
+A connection opens with a full `snapshot` of statuses, which removes the race
+between the initial `/slots` call and the first delta. Polygons are not
+repeated; they come from `GET /lots/{id}/slots`.
+
+`slot_update` carries **all** slots from one committed ingest batch, not one
+slot per frame. The batch is what committed atomically, so a client never
+paints a half-applied batch.
+
+`heartbeat` every 20s keeps proxies from closing an idle stream and is also
+when the server re-checks that the viewer is still a member of the
+organization and that the lot is still active. A revoked member's stream is
+ended with `closing` / `access_revoked`.
+
+A connection is capped at 30 minutes (`closing` / `max_connection_seconds`);
+EventSource reconnects and receives a fresh snapshot. There is no replay:
+pub/sub keeps no history, and a snapshot is a complete resync.
+
+503 `bus_unavailable` when Redis is unreachable at connect time; the stream
+also ends with `closing` / `bus_unavailable` if the bus dies mid-connection.
+Ingestion is unaffected either way — events are durable before anything is
+published.
+
+**Deployment requirement.** Each connection holds a worker thread for its
+lifetime. Run gunicorn with `--worker-class gthread --threads N`; concurrent
+viewers are bounded by threads, not sockets. The contract's "5 concurrent SSE
+connections per user" is enforced in Task 2.6b with the other rate limits.
+
 Content-Type: text/event-stream
 
 event: slot_update
@@ -152,35 +235,126 @@ event: heartbeat
 data: {"at":"..."}
 ```
 
-Send a heartbeat comment every 20s to keep proxies from closing the connection.
-Backed by the Redis channel the ingest endpoint publishes to.
+A camera with no heartbeat for `CAMERA_STALE_SECONDS` (default 90) is declared
+stale by `manage.py sweep_cameras --loop`: its active slots become UNKNOWN, a
+`CameraOutage` row records the window from its last heartbeat, and the change
+is published to the lot's stream. The outage is closed by the camera's next
+heartbeat, where the recovery time is exact.
 
-### `GET /lots/{lot_id}/analytics`
-Query params: `from`, `to`, `bucket` (`hour` | `day`).
+Analytics subtracts recorded outage windows rather than discarding whole
+intervals. A worker restart shorter than the stale threshold never becomes an
+outage, so up to that much unobserved time counts as observed — bounded and
+stated.
+
+Rate limits are enforced with counters in the Redis cache, shared across
+gunicorn workers. 429 carries the uniform error body with code `rate_limited`
+and a `Retry-After` header. The 5-streams-per-user cap returns 429
+`too_many_streams`; the check and the insert are not atomic, so a simultaneous
+burst can exceed it slightly — it bounds abandoned tabs, not attackers.
+
+### GET /lots/{lot_id}/analytics
+
+Query params: `from`, `to` (both RFC 3339 with offset, required), `bucket`
+(`hour` | `day`, default `hour`). Buckets align to the lot's local midnight or
+hour, not UTC. 422 `invalid_range` if `from` >= `to`; 422 `range_too_large`
+above 1000 buckets.
 
 ```json
 {
-  "occupancy_rate": [{ "bucket": "2026-09-01T10:00:00+05:45", "rate": 0.72 }],
-  "dwell_minutes": { "p50": 41, "p90": 137, "mean": 58 },
+  "lot_id": "…", "timezone": "Asia/Kathmandu", "bucket": "hour",
+  "slots_counted": 42, "observed_slot_days": 41.2,
+  "occupancy_rate": [{ "bucket": "2026-09-01T10:00:00+05:45", "rate": 0.72, "coverage": 0.98 }],
+  "dwell_minutes": { "p50": 41, "p90": 137, "mean": 58, "samples": 128 },
   "turnover_per_slot_per_day": 3.4
 }
 ```
+
+Definitions, all derived from one interval model in `parking/analytics.py`:
+
+- An **interval** runs between consecutive events for a slot and carries the
+  status observed at its start.
+- An interval is **unobserved** when the event closing it claims
+  `previous_status: UNKNOWN`, which only happens after a resync — so a gap of
+  unknown length sits inside it. Unobserved time is excluded from both sides of
+  every ratio.
+- **rate** = occupied observed seconds / all observed seconds in the bucket;
+  `null` when nothing was observed.
+- **coverage** = observed seconds / (active slots x bucket length). Read the
+  rate against it: a rate over 4% coverage is not a measurement.
+- **dwell** counts an occupancy only from an event claiming a VACANT
+  predecessor, paired with the next VACANT event. Samples are dropped when a
+  resync falls between the two, and open occupancies are not sampled (they
+  would bias the distribution downwards).
+- **turnover** = arrivals / `observed_slot_days`, so an outage lowers both
+  sides instead of only the numerator.
+
+This is deliberately pessimistic: a worker restart after three quiet hours
+discards those three hours. Recording camera outages (Task 2.6) would let this
+subtract only the outage window.
+
+### GET /lots/{lot_id}/slots
+
+Slots are nested under their camera, each camera carrying its own
+`reference_frame`. A polygon is never returned apart from the frame it was
+drawn against.
 
 ---
 
 ## Slot management (annotation tool)
 
+
+## Lot and camera management (OWNER only)
+
+### `POST /lots`
+`name` (unique within the org, 409 `lot_name_taken`), optional address fields,
+optional `latitude`/`longitude` (both or neither), `timezone` (IANA, default
+`Asia/Kathmandu`, validated on write because analytics computes bucket
+boundaries in it).
+
+### `POST /lots/{lot_id}/cameras`
+`name`, `source_uri` (file/rtsp/rtsps/http/https), `reference_frame`,
+`model_version`. The version must have a model card on the server (422
+`unknown_model_version`) — the camera fails at creation rather than at the
+worker's first config poll. The device token is returned once, with
+`Cache-Control: no-store`.
+
+## Slot management (annotation tool)
+
 ### `POST /cameras/{camera_id}/slots:bulk`
-Replaces the slot set for a camera in one transaction.
 
 ```json
 {
+  "slots_version": "9c1f3a2b8d4e5f60",
   "reference_frame": { "width": 1280, "height": 720 },
-  "slots": [
-    { "label": "A-01", "polygon": [[120,340],[186,338],[190,382],[124,384]], "slot_type": "STANDARD" }
-  ]
+  "slots": [{ "label": "A-01", "polygon": [[120,340],[186,338],[190,382],[124,384]], "slot_type": "STANDARD" }]
 }
 ```
+
+`slots_version` is a hash of the camera's reference frame and active slots —
+exactly what this call replaces. It is read from `GET /lots/{id}/slots` and
+sent back; a mismatch is 409 `slots_version_conflict`, carrying
+`current_slots_version`. It is deliberately not the worker's `config_version`,
+which also covers settings-derived fields and would reject a save because an
+environment variable changed.
+
+Matching is by label within the camera. Absent labels are soft-deactivated
+(v1 deleted and orphaned its history). A label that was removed and is sent
+again becomes a **new** slot: the deactivated row keeps its events rather than
+having a re-drawn bay's events appended to it.
+
+Polygons are canonicalised server-side to clockwise order starting from the
+corner nearest the reference frame's top-left, and the stored form is
+returned. The worker maps point *i* of the quad to corner *i* of its 96x96
+crop, so order decides the patch's rotation; fixing it on the server means no
+client can produce a mirrored crop. 422 `invalid_polygon` for corners outside
+the frame, repeated corners, or an area under 16 px², naming the label; 422
+`duplicate_labels` for a repeated label in one payload.
+
+`reference_frame` replaces the camera's stored frame. That is safe because
+every active slot's polygon is in the payload, so no stored polygon is left in
+the old frame.
+
+`GET /lots/{lot_id}/slots` carries `slots_version` per camera.
 
 Soft-deactivate slots not present rather than hard-deleting them. v1 ran
 `DELETE FROM home_parkingslot` on every restart, orphaning all history. Setting
