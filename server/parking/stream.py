@@ -35,6 +35,7 @@ from django.utils import timezone
 from accounts.models import Membership
 from parking.models import ParkingLot, ParkingSlot, SlotStatus
 from parking.pubsub import subscription
+from parking import presence
 
 logger = logging.getLogger(__name__)
 
@@ -77,35 +78,26 @@ def _still_permitted(lot: ParkingLot, user) -> bool:
     )
 
 
-def sse_stream(lot: ParkingLot, user):
+
+def sse_stream(lot: ParkingLot, user, token: str):
     heartbeat_every = settings.SSE_HEARTBEAT_SECONDS
     deadline = time.monotonic() + settings.SSE_MAX_CONNECTION_SECONDS
     next_heartbeat = time.monotonic() + heartbeat_every
 
-    with subscription(lot.pk) as pubsub:
-        yield _json_frame("snapshot", snapshot(lot))
-
-        while True:
-            if time.monotonic() >= deadline:
-                yield _json_frame("closing", {"reason": "max_connection_seconds"})
-                return
-            try:
-                message = pubsub.get_message(timeout=POLL_SECONDS)
-            except redis.RedisError:
-                logger.warning("stream lost the bus lot=%s", lot.pk, exc_info=True)
-                yield _json_frame("closing", {"reason": "bus_unavailable"})
-                return
-
-            if message and message.get("type") == "message":
-                # Forwarded verbatim: re-encoding could only introduce a
-                # difference between what was published and what is delivered.
-                yield _frame("slot_update", message["data"])
-                continue
-
-            if time.monotonic() >= next_heartbeat:
-                next_heartbeat = time.monotonic() + heartbeat_every
-                close_old_connections()
-                if not _still_permitted(lot, user):
-                    yield _json_frame("closing", {"reason": "access_revoked"})
-                    return
-                yield _json_frame("heartbeat", {"at": timezone.now()})
+    try:
+        with subscription(lot.pk) as pubsub:
+            yield _json_frame("snapshot", snapshot(lot))
+            ...
+                if time.monotonic() >= next_heartbeat:
+                    next_heartbeat = time.monotonic() + heartbeat_every
+                    close_old_connections()
+                    if not _still_permitted(lot, user):
+                        yield _json_frame("closing", {"reason": "access_revoked"})
+                        return
+                    presence.refresh(user.pk, token)
+                    yield _json_frame("heartbeat", {"at": timezone.now()})
+    finally:
+        try:
+            presence.release(user.pk, token)
+        except redis.RedisError:
+            logger.warning("could not release stream slot user=%s", user.pk, exc_info=True)

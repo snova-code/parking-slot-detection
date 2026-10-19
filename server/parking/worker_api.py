@@ -7,6 +7,8 @@ POSTs are not blocked by CsrfViewMiddleware; session CSRF is re-applied by the
 session auth classes, which never appear here.
 """
 from __future__ import annotations
+import logging
+
 
 from decimal import Decimal
 from typing import Literal
@@ -18,13 +20,15 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from config.errors import ApiError
 from parking.ingest import MAX_BATCH, IncomingEvent, ingest_events
-from parking.models import Camera
+from parking.models import Camera, CameraOutage
 from parking.security import device_token
 from parking.worker_config import build_config, resync_slot_ids
 from parking.schemas import ReferenceFrameOut
+from config.throttles import (worker_config_throttle, worker_events_throttle, worker_heartbeat_throttle)
 
 worker_router = Router(tags=["worker"], auth=device_token)
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- config ----
 
@@ -122,12 +126,12 @@ def _require_own_camera(request, camera_id: UUID) -> Camera:
     return camera
 
 
-@worker_router.get("/config", response=WorkerConfigOut)
+@worker_router.get("/config", response=WorkerConfigOut, throttle=[worker_config_throttle])
 def worker_config(request):
     return build_config(request.auth.camera)
 
 
-@worker_router.post("/events", response=EventBatchOut)
+@worker_router.post("/events", response=EventBatchOut, throttle=[worker_events_throttle])
 def post_events(request, payload: EventBatchIn):
     camera = _require_own_camera(request, payload.camera_id)
     if len(payload.events) > MAX_BATCH:
@@ -150,16 +154,22 @@ def post_events(request, payload: EventBatchIn):
     }
 
 
-@worker_router.post("/heartbeat", response=HeartbeatOut)
+@worker_router.post("/heartbeat", response=HeartbeatOut, throttle=[worker_heartbeat_throttle])
 def heartbeat(request, payload: HeartbeatIn):
-    """Records liveness first, so a camera is seen as alive even when its
+    """Records liveness first, so a camera counts as alive even when its
     config cannot be built. frames_processed, queue_depth, uptime_seconds and
-    model_version are validated but not persisted; the schema holds only
-    last_seen_at and last_fps."""
+    model_version are validated but not persisted.
+
+    Closing the outage here rather than in the sweep is what makes its end
+    exact: the sweep would only know recovery to within its own interval."""
     camera = _require_own_camera(request, payload.camera_id)
+    now = timezone.now()
     (Camera.objects.for_org(camera.org_id).filter(pk=camera.pk)
-     .update(last_seen_at=timezone.now(),
-             last_fps=Decimal(str(round(payload.fps, 2)))))
+     .update(last_seen_at=now, last_fps=Decimal(str(round(payload.fps, 2)))))
+    reopened = (CameraOutage.objects.for_org(camera.org_id)
+                .filter(camera=camera, ended_at__isnull=True).update(ended_at=now))
+    if reopened:
+        logger.info("camera back online camera=%s", camera.pk)
     return {
         "ok": True,
         "config_version": build_config(camera)["config_version"],

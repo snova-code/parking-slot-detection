@@ -210,3 +210,35 @@ class OccupancyEvent(TenantModel):
             models.Index(fields=["slot", "-observed_at"], name="event_slot_observed"),
             models.Index(fields=["org", "-observed_at"], name="event_org_observed"),
         ]
+
+class CameraOutage(TenantModel):
+    """A window in which the server was not receiving from a camera.
+
+    Opened by the stale sweep when heartbeats lapse, closed by the camera's
+    next heartbeat. Recorded rather than merely acted on, because analytics
+    has to know after the fact which time was unobserved: without this, one
+    worker restart discards every interval it interrupted.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    camera = models.ForeignKey(Camera, on_delete=models.CASCADE, related_name="outages")
+    # The last moment anything was known: the camera's last heartbeat.
+    started_at = models.DateTimeField()
+    # When the sweep noticed. started_at..detected_at is the detection delay.
+    detected_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "camera_outage"
+        constraints = [
+            # Makes a double-declaration harmless: the second writer loses.
+            models.UniqueConstraint(fields=["camera"], condition=Q(ended_at__isnull=True),
+                                    name="camera_outage_one_open_per_camera"),
+            models.CheckConstraint(
+                condition=Q(ended_at__isnull=True) | Q(ended_at__gte=F("started_at")),
+                name="camera_outage_ends_after_start"),
+        ]
+        indexes = [
+            models.Index(fields=["camera", "-started_at"], name="camera_outage_span"),
+        ]

@@ -16,6 +16,7 @@ from uuid import UUID
 
 import redis
 from django.conf import settings
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -58,3 +59,29 @@ def subscription(lot_id):
             pubsub.close()
         except redis.RedisError:
             logger.warning("could not close subscription lot=%s", lot_id, exc_info=True)
+
+from django.db import transaction
+
+
+def publish_slot_states(camera, states) -> None:
+    """One message per committed change set, whatever produced it — an ingest
+    batch or the stale sweep. Both go through here so the wire shape cannot
+    differ between them. Registered on_commit: a subscriber must never see an
+    update for a transaction that rolls back."""
+    if not states:
+        return
+    message = {
+        "lot_id": str(camera.lot_id),
+        "camera_id": str(camera.pk),
+        "slots": [
+            {
+                "slot_id": str(state.slot_id),
+                "status": state.status,
+                "confidence": None if state.confidence is None else float(state.confidence),
+                "since": state.since.isoformat(),
+                "at": state.last_observed_at.isoformat() if state.last_observed_at else None,
+            }
+            for state in states
+        ],
+    }
+    transaction.on_commit(lambda: publish(camera.lot_id, message))

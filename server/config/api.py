@@ -13,7 +13,6 @@ from ninja import NinjaAPI
 from accounts.api import router as auth_router
 from accounts.security import any_member
 from config.errors import install_error_handlers
-from parking.api import cameras_router
 from parking.worker_api import worker_router
 from parking.api import cameras_router, lots_router
 

@@ -26,7 +26,7 @@ def test_tenant_model_set_is_exactly_what_the_data_model_lists():
     parametrised test below then holds the new model to the same rules."""
     assert {m.__name__ for m in TENANT_MODELS} == {
         "Membership", "ParkingLot", "Camera", "ParkingSlot",
-        "SlotState", "OccupancyEvent",
+        "SlotState", "OccupancyEvent", "CameraOutage",
     }
 
 

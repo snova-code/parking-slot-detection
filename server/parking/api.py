@@ -36,6 +36,7 @@ from django.http import StreamingHttpResponse
 from parking.pubsub import client as redis_client
 from parking.stream import sse_stream
 from urllib.parse import urlencode
+from parking import presence
 
 
 cameras_router = Router(tags=["cameras"])
@@ -372,18 +373,19 @@ def lot_stream(request, lot_id: UUID):
     cannot set an Authorization header; SameSite=Lax on the session cookie is
     what stops a cross-origin page opening one."""
     lot = _get_lot(request, lot_id)
+
     try:
-        # Fail now, so an outage is a clean 503 rather than a stream that dies
-        # one frame after the snapshot.
         redis_client().ping()
+        token = presence.acquire(request.auth.user.pk)
     except redis.RedisError as exc:
         raise ApiError(503, "bus_unavailable",
                        "Live updates are unavailable. Poll /slots instead.") from exc
 
     response = StreamingHttpResponse(
-        sse_stream(lot, request.auth.user),
+        sse_stream(lot, request.auth.user, token),
         content_type="text/event-stream",
     )
+
     response["Cache-Control"] = "no-cache, no-store"
     response["X-Accel-Buffering"] = "no"    # nginx must not buffer the stream
     return response

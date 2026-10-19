@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from django.http import Http404
 from ninja import NinjaAPI
-from ninja.errors import HttpError, ValidationError
+from math import ceil
+from ninja.errors import HttpError, Throttled, ValidationError
 
 STATUS_CODES = {
     400: "bad_request",
@@ -67,8 +68,17 @@ def install_error_handlers(api: NinjaAPI) -> None:
     def not_found(request, exc: Http404):
         return api.create_response(request, error_body("not_found", "Not found."),
                                    status=404)
+    def throttled(request, exc: Throttled):
+        # ninja adds Retry-After to whatever this returns.
+        return api.create_response(
+            request,
+            error_body("rate_limited", "Too many requests.",
+                       {"retry_after_seconds": None if exc.wait is None else ceil(exc.wait)}),
+            status=429,
+        )
 
     api.add_exception_handler(ApiError, api_error)
     api.add_exception_handler(ValidationError, validation_error)
     api.add_exception_handler(HttpError, http_error)
     api.add_exception_handler(Http404, not_found)
+    api.add_exception_handler(Throttled, throttled)

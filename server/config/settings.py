@@ -37,8 +37,8 @@ def env_list(name: str) -> list[str]:
 # pair is a result from ml/results/smoothing_sweep.md, so it has no default.
 
 
-def _positive_int(name: str) -> int:
-    raw = env(name, required=True)
+def _positive_int(name: str, default: str | None = None) -> int:
+    raw = env(name, default, required=default is None)
     try:
         value = int(raw)
     except ValueError as exc:
@@ -161,3 +161,26 @@ SSE_HEARTBEAT_SECONDS = _positive_float("APMS_SSE_HEARTBEAT_SECONDS", "20")
 # EventSource reconnects on its own, so capping a connection's life costs the
 # client nothing and stops threads being held forever by abandoned tabs.
 SSE_MAX_CONNECTION_SECONDS = _positive_float("APMS_SSE_MAX_CONNECTION_SECONDS", "1800")
+
+# --- Camera liveness ---------------------------------------------------------
+# Three missed 30s heartbeats (04_API_CONTRACT.md).
+CAMERA_STALE_SECONDS = _positive_float("APMS_CAMERA_STALE_SECONDS", "90")
+SWEEP_INTERVAL_SECONDS = _positive_float("APMS_SWEEP_INTERVAL_SECONDS", "15")
+
+# --- Rate limiting -----------------------------------------------------------
+# Redis-backed so counters are shared across gunicorn workers. A per-process
+# cache would give each worker its own allowance.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "KEY_PREFIX": "apms",
+    }
+}
+TRUST_X_FORWARDED_FOR = env_flag("APMS_TRUST_X_FORWARDED_FOR")
+SSE_MAX_CONNECTIONS_PER_USER = _positive_int("APMS_SSE_MAX_CONNECTIONS_PER_USER", "5")
+
+RATE_WORKER_EVENTS = env("APMS_RATE_WORKER_EVENTS", "60/min")
+RATE_WORKER_HEARTBEAT = env("APMS_RATE_WORKER_HEARTBEAT", "4/min")
+RATE_WORKER_CONFIG = env("APMS_RATE_WORKER_CONFIG", "20/min")
+RATE_LOGIN = env("APMS_RATE_LOGIN", "10/min")

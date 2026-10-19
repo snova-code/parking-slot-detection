@@ -15,6 +15,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.middleware.csrf import get_token
 from ninja import Router, Schema
 from pydantic import field_validator
+from config.throttles import login_throttle
 
 from accounts.models import Membership
 from accounts.phone import normalize_phone
@@ -80,7 +81,7 @@ def csrf(request):
     return {"csrf_token": get_token(request)}
 
 
-@router.post("/login", response=MeOut, auth=None)
+@router.post("/login", response=MeOut, auth=None, throttle=[login_throttle])
 def login_view(request, payload: LoginIn):
     # Unauthenticated, so session auth's CSRF check never runs here. Login CSRF
     # would sign the victim's browser into the attacker's account.
