@@ -108,9 +108,15 @@ def test_reannouncement_is_not_an_arrival(make_tree, api):
 
     body = fetch(api(a), a.lot, ktm(10, 9), ktm(10, 13))
     assert body["dwell_minutes"]["samples"] == 0          # interrupted
-    # One arrival, not two, and it is divided by observed time only.
-    expected = 1 / body["observed_slot_days"]
-    assert body["turnover_per_slot_per_day"] == pytest.approx(round(expected, 3))
+
+    # observed_slot_days is rounded to 4 places in the response (analytics.py
+    # line 249) while turnover is computed from the unrounded value, so the
+    # quotient cannot be re-derived exactly: 1/0.0833 is 12.005, 1/0.08333... is
+    # 12.0. What this test pins is one arrival, not two.
+    observed = body["observed_slot_days"]
+    turnover = body["turnover_per_slot_per_day"]
+    assert turnover == pytest.approx(1 / observed, rel=1e-3)
+    assert turnover != pytest.approx(2 / observed, rel=1e-3)
 
 
 def test_day_buckets_align_to_the_lots_local_midnight(make_tree, api):
@@ -140,16 +146,21 @@ def test_events_from_another_org_never_appear(make_tree, api):
 
 
 def test_ranges_are_validated(make_tree, api):
+    """Builds its own URLs rather than going through fetch(), which asserts
+    200 — but must still urlencode, or '+05:45' arrives as a space and the
+    datetime is rejected before the range checks run."""
     a = make_tree("alpha")
     client = api(a)
-    backwards = client.get(
-        f"/lots/{a.lot.pk}/analytics?from={ktm(11, 0).isoformat()}"
-        f"&to={ktm(10, 0).isoformat()}")
-    assert backwards.status_code == 422
+
+    def get(start, end, **extra):
+        query = urlencode({"from": start.isoformat(), "to": end.isoformat(),
+                           **extra})
+        return client.get(f"/lots/{a.lot.pk}/analytics?{query}")
+
+    backwards = get(ktm(11, 0), ktm(10, 0))
+    assert backwards.status_code == 422, backwards.content
     assert backwards.json()["error"]["code"] == "invalid_range"
 
-    huge = client.get(
-        f"/lots/{a.lot.pk}/analytics?from={ktm(10, 0).isoformat()}"
-        f"&to={(ktm(10, 0) + timedelta(days=60)).isoformat()}&bucket=hour")
-    assert huge.status_code == 422
+    huge = get(ktm(10, 0), ktm(10, 0) + timedelta(days=60), bucket="hour")
+    assert huge.status_code == 422, huge.content
     assert huge.json()["error"]["code"] == "range_too_large"

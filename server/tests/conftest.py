@@ -73,3 +73,49 @@ def as_owner(make_member):
         return api
 
     return build
+
+@pytest.fixture
+def redis_bus(settings):
+    """A reachable Redis bus for the SSE tests.
+
+    The pubsub client is lru_cached per process, so the cache must be cleared
+    around any test that changes REDIS_URL — otherwise this test inherits the
+    connection dead_bus left behind, or leaves its own for the next one.
+
+    Fails rather than skips when Redis is down: a silently skipped SSE suite
+    looks like a passing one. Set APMS_SKIP_REDIS_TESTS=1 to opt out
+    deliberately.
+    """
+    import os
+
+    import redis as redis_lib
+
+    from parking import pubsub
+
+    pubsub.client.cache_clear()
+    try:
+        pubsub.client().ping()
+    except redis_lib.RedisError as exc:
+        pubsub.client.cache_clear()
+        if os.environ.get("APMS_SKIP_REDIS_TESTS") == "1":
+            pytest.skip(f"Redis unreachable at {settings.REDIS_URL}: {exc}")
+        pytest.fail(
+            f"Redis unreachable at {settings.REDIS_URL}: {exc}\n"
+            "Start it with: docker compose -f infra/docker-compose.yml up -d redis"
+        )
+    yield pubsub.client()
+    pubsub.client.cache_clear()
+
+
+@pytest.fixture
+def sse_settings(settings):
+    """Short SSE timings so the stream tests finish in seconds.
+
+    Production heartbeat is 20s; test_heartbeats_keep_the_stream_open reads the
+    frame straight after the snapshot, and next_event() gives up at 10s. The
+    connection cap is shortened too, so a stream that never closes ends the
+    test instead of holding the suite open.
+    """
+    settings.SSE_HEARTBEAT_SECONDS = 0.2
+    settings.SSE_MAX_CONNECTION_SECONDS = 5.0
+    return settings
