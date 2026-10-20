@@ -1,0 +1,48 @@
+<!-- web/templates/annotate.html -->
+{% extends "base.html" %}{% load static %}
+{% block title %}Annotate — APMS{% endblock %}
+{% block main %}
+<div id="conflict" class="banner warn" hidden>
+  <span>Someone else changed this camera's slots. Your edits are not saved.</span>
+  <button id="reload">Discard mine and reload</button>
+</div>
+<div id="frame-warning" class="banner warn" hidden></div>
+
+<div class="annotate">
+  <div class="canvas-wrap">
+    <canvas id="canvas" width="16" height="16"></canvas>
+    <p id="canvas-error" class="error" hidden></p>
+  </div>
+
+  <aside class="panel">
+    <h2 id="camera-name">Camera</h2>
+    <p class="muted" id="frame-info"></p>
+
+    <div class="row">
+      <button id="add">Add slot</button>
+      <button id="save" class="primary" disabled>Save</button>
+    </div>
+    <p class="muted" id="draft-hint" hidden>Click the four corners of the bay.
+      Escape cancels.</p>
+
+    <h3>Slots (<span id="count">0</span>)</h3>
+    <ul id="slot-list" class="slots"></ul>
+
+    <div id="editor" hidden>
+      <label>Label <input id="label" maxlength="32"></label>
+      <label>Type
+        <select id="slot-type">
+          <option value="STANDARD">Standard</option>
+          <option value="ACCESSIBLE">Accessible</option>
+          <option value="EV">EV</option>
+        </select>
+      </label>
+      <button id="remove" class="danger">Remove slot</button>
+    </div>
+
+    <p class="muted small">Corner order is fixed by the server on save, so any
+      winding works. Removing a slot keeps its history.</p>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="{% static 'annotate.js' %}"></script>{% endblock %}

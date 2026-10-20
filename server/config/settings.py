@@ -13,6 +13,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+WEB_ROOT = BASE_DIR.parent / "web"
 
 
 def env(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -66,6 +67,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "django.contrib.sessions",
+    "django.contrib.staticfiles",
     "accounts",
     "parking",
 ]
@@ -85,7 +87,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [WEB_ROOT / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {},
     }
@@ -132,6 +134,12 @@ CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
 # Numbers typed without a country code are read as Nepali.
 PHONE_DEFAULT_REGION = "NP"
+
+STATIC_URL = "static/"
+STATICFILES_DIRS = [WEB_ROOT / "static"]
+# Phase 5 needs whitenoise or nginx in front: runserver only serves these
+# while DEBUG is on.
+STATIC_ROOT = BASE_DIR.parent / "staticfiles"
 
 USE_TZ = True
 TIME_ZONE = "UTC"

@@ -1,0 +1,8 @@
+<!-- web/templates/lots.html -->
+{% extends "base.html" %}{% load static %}
+{% block title %}Lots — APMS{% endblock %}
+{% block main %}
+<h1>Parking lots</h1>
+<div id="lots" class="grid"><p class="muted">Loading…</p></div>
+{% endblock %}
+{% block scripts %}<script type="module" src="{% static 'lots.js' %}"></script>{% endblock %}

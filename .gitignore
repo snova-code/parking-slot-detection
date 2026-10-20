@@ -44,4 +44,4 @@ worker-data/
 *.sqlite3
 
 # media/ holds uploaded reference frames
-media/
+media/staticfiles/
