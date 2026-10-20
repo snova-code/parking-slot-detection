@@ -1,0 +1,7 @@
+# worker/requirements-dev.txt
+# Test-only dependencies. The container builds from requirements.txt alone, so
+# nothing here reaches the VPS. Versions match server/requirements.txt so both
+# suites run under the same pytest.
+-r requirements.txt
+
+pytest==9.1.1

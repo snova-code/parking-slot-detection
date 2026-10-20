@@ -39,3 +39,6 @@ ml/notebooks/*.ipynb_checkpoints
 
 # Cached per-patch scores — regenerate with `evaluate --dump-scores`
 ml/results/scores/
+
+worker-data/
+*.sqlite3
