@@ -7,6 +7,7 @@ import hashlib
 import httpx
 import pytest
 
+from worker import model_store
 from worker.contract import ModelSpec
 from worker.model_store import ModelIntegrityError, ModelStore
 
@@ -19,45 +20,66 @@ def spec(sha: str = DIGEST) -> ModelSpec:
                      sha256=sha, input_size=(96, 96))
 
 
-def serving(body: bytes, calls: list) -> httpx.Client:
-    def handler(request):
-        calls.append(request.url)
-        return httpx.Response(200, content=body)
+@pytest.fixture
+def host(monkeypatch):
+    """Installs a fake model host. Returns the list of requests it saw."""
+    def install(handler):
+        calls = []
 
-    return httpx.Client(transport=httpx.MockTransport(handler))
+        def wrapped(request):
+            assert not any(name.lower() == "authorization" for name in request.headers), \
+                "the device token must never reach the model host"
+            calls.append(request.url)
+            return handler(request)
+
+        monkeypatch.setattr(
+            model_store, "_download_client",
+            lambda: httpx.Client(transport=httpx.MockTransport(wrapped)))
+        return calls
+
+    return install
 
 
-def test_a_model_is_downloaded_once(tmp_path):
-    calls = []
-    store = ModelStore(tmp_path, serving(PAYLOAD, calls))
+def ok(body: bytes):
+    return lambda request: httpx.Response(200, content=body)
+
+
+def test_a_model_is_downloaded_once(tmp_path, host):
+    calls = host(ok(PAYLOAD))
+    store = ModelStore(tmp_path)
     first = store.ensure(spec())
     second = store.ensure(spec())
     assert first == second and first.read_bytes() == PAYLOAD
     assert len(calls) == 1
 
 
-def test_a_corrupt_cache_is_refetched(tmp_path):
-    calls = []
-    store = ModelStore(tmp_path, serving(PAYLOAD, calls))
-    path = store.ensure(spec())
-    path.write_bytes(b"truncated")
-
+def test_a_corrupt_cache_is_refetched(tmp_path, host):
+    calls = host(ok(PAYLOAD))
+    store = ModelStore(tmp_path)
+    store.ensure(spec()).write_bytes(b"truncated")
     assert store.ensure(spec()).read_bytes() == PAYLOAD
     assert len(calls) == 2
 
 
-def test_a_wrong_hash_is_never_left_on_disk(tmp_path):
-    store = ModelStore(tmp_path, serving(b"something else", []))
+def test_a_wrong_hash_is_never_left_on_disk(tmp_path, host):
+    host(ok(b"something else"))
     with pytest.raises(ModelIntegrityError):
-        store.ensure(spec())
+        ModelStore(tmp_path).ensure(spec())
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_failed_download_leaves_nothing_behind(tmp_path):
-    def handler(request):
+def test_a_404_leaves_nothing_behind(tmp_path, host):
+    host(lambda request: httpx.Response(404, text="Not Found"))
+    with pytest.raises(ModelIntegrityError, match="could not download"):
+        ModelStore(tmp_path).ensure(spec())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_dropped_connection_leaves_nothing_behind(tmp_path, host):
+    def drop(request):
         raise httpx.ConnectError("no route to host")
 
-    store = ModelStore(tmp_path, httpx.Client(transport=httpx.MockTransport(handler)))
+    host(drop)
     with pytest.raises(ModelIntegrityError):
-        store.ensure(spec())
+        ModelStore(tmp_path).ensure(spec())
     assert list(tmp_path.iterdir()) == []

@@ -213,7 +213,7 @@ def run_once(settings: Settings, save_crops: Path | None) -> int:
         if not config.slots:
             logger.error("this camera has no active slots; annotate it first")
             return 1
-        model_path = ModelStore(settings.models_dir, http).ensure(config.model)
+        model_path = ModelStore(settings.models_dir).ensure(config.model)   # in run_once
 
     classifier = Classifier.load(model_path, config.model.input_size,
                                  config.model.version, settings.ort_threads)
@@ -261,8 +261,7 @@ def run_once(settings: Settings, save_crops: Path | None) -> int:
 def run_forever(settings: Settings) -> int:
     queue = EventQueue(settings.data_dir / "outbox.sqlite3")
     with build_http_client(settings) as http:
-        worker = Worker(settings, ApiClient(http), ModelStore(settings.models_dir, http),
-                        queue)
+        worker = Worker(settings, ApiClient(http), ModelStore(settings.models_dir), queue)
         signal.signal(signal.SIGTERM, worker.stop)
         signal.signal(signal.SIGINT, worker.stop)
         try:

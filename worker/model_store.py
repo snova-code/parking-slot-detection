@@ -14,14 +14,31 @@ from pathlib import Path
 
 import httpx
 
+from worker.api_client import USER_AGENT
 from worker.contract import ModelSpec
 
 logger = logging.getLogger(__name__)
 CHUNK = 1 << 20
+DOWNLOAD_TIMEOUT = 120.0
 
 
 class ModelIntegrityError(RuntimeError):
     pass
+
+
+def _download_client() -> httpx.Client:
+    """A clean client for the model host.
+
+    Deliberately NOT the API client. That one carries the device token in an
+    Authorization header, and the model lives on a different origin — a
+    GitHub release URL redirects to object storage, so reusing it would hand
+    the camera's credential to two hosts with no business holding it.
+
+    Redirects are followed here, unlike on the API client, because a release
+    asset URL is always a redirect.
+    """
+    return httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True,
+                        headers={"User-Agent": USER_AGENT})
 
 
 def sha256_of(path: Path) -> str:
@@ -33,9 +50,8 @@ def sha256_of(path: Path) -> str:
 
 
 class ModelStore:
-    def __init__(self, directory: Path, http: httpx.Client) -> None:
+    def __init__(self, directory: Path) -> None:
         self.directory = directory
-        self.http = http
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, spec: ModelSpec) -> Path:
@@ -57,9 +73,9 @@ class ModelStore:
     def _download(self, spec: ModelSpec, target: Path) -> None:
         partial = target.with_suffix(".part")
         digest = hashlib.sha256()
-        logger.info("downloading model %s", spec.version)
+        logger.info("downloading model %s from %s", spec.version, spec.url)
         try:
-            with self.http.stream("GET", spec.url, timeout=120.0) as response:
+            with _download_client() as http, http.stream("GET", spec.url) as response:
                 response.raise_for_status()
                 with open(partial, "wb") as handle:
                     for block in response.iter_bytes(CHUNK):
