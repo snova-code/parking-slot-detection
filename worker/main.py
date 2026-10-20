@@ -35,6 +35,7 @@ from worker.queue import EventQueue
 from worker.sender import Sender
 from worker.smoothing import DECISION_THRESHOLD, VoterSet, window_seconds
 from worker.source import FrameSource, SourceUnavailable
+import numpy as np
 
 CONFIG_REFRESH_SECONDS = 300
 HEARTBEAT_SECONDS = 30
@@ -65,6 +66,7 @@ class Worker:
         self.source: FrameSource | None = None
         self.sender: Sender | None = None
         self.slot_order: list = []
+        self.frame_upload_pending = True
 
     # ------------------------------------------------------------ lifecycle
     def stop(self, signum=None, frame=None) -> None:
@@ -104,6 +106,7 @@ class Worker:
             self.sender = Sender(self.client, self.queue, config.camera_id)
 
         seconds = window_seconds(config.smoothing.window, config.sampling.target_fps)
+        self.frame_upload_pending = True
         logger.info(
             "config %s: %d slot(s), %d-of-%d vote over %.1fs at %.1f fps",
             config.config_version, len(config.slots),
@@ -173,10 +176,13 @@ class Worker:
         last_config = last_heartbeat = time.monotonic()
         while self.running:
             try:
-                self.process_frame(next(frames))
+                frame = next(frames)
             except StopIteration:
                 logger.error("frame source ended")
                 return 1
+            if self.frame_upload_pending:
+                self.upload_reference_frame(frame)
+            self.process_frame(frame)
 
             now = time.monotonic()
             try:
@@ -201,6 +207,34 @@ class Worker:
                 # holds what it cannot deliver.
                 logger.warning("server unreachable: %s", exc)
         return 0
+
+    def upload_reference_frame(self, frame) -> None:
+        """Sent on startup and after a config change — the moments the stored
+        frame could be wrong for a reason that matters: a moved camera, a new
+        resolution, someone about to annotate. A timer would write constantly
+        to serve a page nobody has open."""
+        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            logger.warning("could not encode the reference frame")
+            return
+        try:
+            result = self.client.upload_frame(encoded.tobytes())
+        except AuthRejected:
+            raise
+        except ApiError as exc:
+            logger.warning("reference frame not uploaded: %s", exc)
+            return
+        if not result.matches_reference_frame:
+            logger.warning(
+                "this camera captures %dx%d but its polygons were drawn "
+                "against a different frame; re-annotate at the capture size",
+                result.width, result.height)
+        else:
+            logger.info("reference frame uploaded (%dx%d, %.0f KB)",
+                        result.width, result.height, result.bytes / 1000)
+        self.frame_upload_pending = False
+
+    
 
 
 def run_once(settings: Settings, save_crops: Path | None) -> int:

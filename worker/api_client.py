@@ -116,6 +116,18 @@ class ApiClient:
             return HeartbeatResult.model_validate(response.json())
         except ValueError as exc:
             raise ContractViolation(f"unexpected heartbeat response: {exc}") from exc
+    
+    def upload_frame(self, jpeg: bytes) -> FrameResult:
+        try:
+            response = self.http.post("/worker/frame", content=jpeg,
+                                      headers={"Content-Type": "image/jpeg"})
+        except httpx.HTTPError as exc:
+            raise ApiError(f"could not reach the server: {exc}") from exc
+        _raise_for_status(response)
+        try:
+            return FrameResult.model_validate(response.json())
+        except ValueError as exc:
+            raise ContractViolation(f"unexpected frame response: {exc}") from exc
 
 class EventBatchResult(BaseModel):
     accepted: int
@@ -129,3 +141,9 @@ class HeartbeatResult(BaseModel):
     config_version: str
     resync_slot_ids: list[UUID] = []
 
+class FrameResult(BaseModel):
+    camera_id: UUID
+    width: int
+    height: int
+    bytes: int
+    matches_reference_frame: bool

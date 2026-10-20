@@ -184,3 +184,10 @@ RATE_WORKER_EVENTS = env("APMS_RATE_WORKER_EVENTS", "60/min")
 RATE_WORKER_HEARTBEAT = env("APMS_RATE_WORKER_HEARTBEAT", "4/min")
 RATE_WORKER_CONFIG = env("APMS_RATE_WORKER_CONFIG", "20/min")
 RATE_LOGIN = env("APMS_RATE_LOGIN", "10/min")
+
+# --- Reference frames --------------------------------------------------------
+# One JPEG per camera, overwritten. The annotation tool needs what the camera
+# sees now; a history of frames has no reader. On disk rather than in a column
+# so that every camera query does not carry 200KB it does not want.
+MEDIA_ROOT = Path(env("APMS_MEDIA_ROOT") or BASE_DIR.parent / "media")
+FRAME_MAX_BYTES = _positive_int("APMS_FRAME_MAX_BYTES", str(4 * 1024 * 1024))
