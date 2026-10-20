@@ -14,6 +14,8 @@ import httpx
 
 from worker.config import Settings
 from worker.contract import WorkerConfig
+from uuid import UUID
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 USER_AGENT = "apms-worker/0.1"
@@ -82,3 +84,66 @@ class ApiClient:
         except ValueError as exc:
             # The server answered, but not with something this worker can run.
             raise ContractViolation(f"config did not match the contract: {exc}") from exc
+    
+    def post_events(self, camera_id, events: list[dict]) -> EventBatchResult:
+        try:
+            response = self.http.post("/worker/events",
+                                      json={"camera_id": str(camera_id), "events": events})
+        except httpx.HTTPError as exc:
+            raise ApiError(f"could not reach the server: {exc}") from exc
+        _raise_for_status(response)
+        try:
+            return EventBatchResult.model_validate(response.json())
+        except ValueError as exc:
+            raise ContractViolation(f"unexpected ingest response: {exc}") from exc
+
+    def heartbeat(self, camera_id, *, fps: float, frames_processed: int,
+                  queue_depth: int, model_version: str,
+                  uptime_seconds: float) -> HeartbeatResult:
+        try:
+            response = self.http.post("/worker/heartbeat", json={
+                "camera_id": str(camera_id),
+                "fps": round(fps, 2),
+                "frames_processed": frames_processed,
+                "queue_depth": queue_depth,
+                "model_version": model_version,
+                "uptime_seconds": round(uptime_seconds, 1),
+            })
+        except httpx.HTTPError as exc:
+            raise ApiError(f"could not reach the server: {exc}") from exc
+        _raise_for_status(response)
+        try:
+            return HeartbeatResult.model_validate(response.json())
+        except ValueError as exc:
+            raise ContractViolation(f"unexpected heartbeat response: {exc}") from exc
+    
+    def upload_frame(self, jpeg: bytes) -> FrameResult:
+        try:
+            response = self.http.post("/worker/frame", content=jpeg,
+                                      headers={"Content-Type": "image/jpeg"})
+        except httpx.HTTPError as exc:
+            raise ApiError(f"could not reach the server: {exc}") from exc
+        _raise_for_status(response)
+        try:
+            return FrameResult.model_validate(response.json())
+        except ValueError as exc:
+            raise ContractViolation(f"unexpected frame response: {exc}") from exc
+
+class EventBatchResult(BaseModel):
+    accepted: int
+    duplicates: int
+    rejected: list[dict] = []
+    previous_status_mismatches: int = 0
+
+
+class HeartbeatResult(BaseModel):
+    ok: bool
+    config_version: str
+    resync_slot_ids: list[UUID] = []
+
+class FrameResult(BaseModel):
+    camera_id: UUID
+    width: int
+    height: int
+    bytes: int
+    matches_reference_frame: bool

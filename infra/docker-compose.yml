@@ -1,4 +1,10 @@
 # infra/docker-compose.yml
+# `docker compose up -d` starts Postgres and Redis only — the datastores the
+# server and tests need when you run them on the host.
+#
+# `docker compose --profile app up -d --build` adds the worker and the
+# camera sweeper. The sweeper needs the server image, which Phase 5.1 builds;
+# until then it is commented out rather than left as a broken service.
 name: apms
 
 services:
@@ -42,6 +48,47 @@ services:
       timeout: 3s
       retries: 10
 
+  worker:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    image: apms-worker
+    container_name: apms-worker
+    restart: unless-stopped
+    environment:
+      # host.docker.internal reaches runserver on the host during development.
+      # In Phase 5 this becomes the server service's name.
+      APMS_SERVER_URL: ${APMS_WORKER_SERVER_URL:-http://host.docker.internal:8000}
+      APMS_DEVICE_TOKEN: ${APMS_DEVICE_TOKEN}
+      APMS_LOG_LEVEL: ${APMS_LOG_LEVEL:-INFO}
+      APMS_ORT_THREADS: ${APMS_ORT_THREADS:-1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - worker_data:/data
+      # The demo video the camera's source_uri points at, read-only.
+      - ${APMS_DEMO_VIDEO_DIR:-./demo}:/demo:ro
+    healthcheck:
+      # The outbox is created at startup and is the one file that proves the
+      # process got past configuration.
+      test: ["CMD-SHELL", "test -f /data/outbox.sqlite3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # sweeper:
+  #   profiles: ["app"]
+  #   image: apms-server          # built in Phase 5.1
+  #   command: ["python", "manage.py", "sweep_cameras", "--loop"]
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres: {condition: service_healthy}
+  #     redis: {condition: service_healthy}
+
 volumes:
   postgres_data:
     name: apms_postgres_data
+  worker_data:
+    name: apms_worker_data

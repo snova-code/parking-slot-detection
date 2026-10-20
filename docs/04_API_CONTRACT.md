@@ -59,6 +59,32 @@ Never accept a device token on a human endpoint or vice versa.
 
 ## Worker endpoints
 
+### `POST /worker/frame`
+
+Raw `image/jpeg` body, device token auth. The camera's current view, for the
+annotation tool to draw on. One per camera, overwritten; no history is kept
+because no reader wants one. Sent by the worker at startup and after every
+config change, not on a timer.
+
+```json
+{ "camera_id": "3f2a…", "width": 1280, "height": 720,
+  "bytes": 184320, "matches_reference_frame": true }
+```
+
+`matches_reference_frame` is false when the capture resolution differs from
+the frame the polygons were drawn against. The worker logs it, the response
+reports it, and the dashboard can show it — the alternative is silently
+stretched crops.
+
+422 `invalid_frame` for a body that is not a decodable JPEG; 413
+`frame_too_large` above `APMS_FRAME_MAX_BYTES` (default 4 MB).
+
+### `GET /cameras/{camera_id}/frame`
+
+Returns the stored JPEG to any member of the camera's organization. 404
+`frame_not_available` when no worker has uploaded one yet, 404
+`camera_not_found` for another organization's camera.
+
 ### `GET /worker/config`
 
 Called on startup and every 5 minutes. The worker holds no persistent config of

@@ -37,6 +37,9 @@ from parking.pubsub import client as redis_client
 from parking.stream import sse_stream
 from urllib.parse import urlencode
 from parking import presence
+from django.http import FileResponse
+
+from parking.frames import frame_path
 
 
 cameras_router = Router(tags=["cameras"])
@@ -48,6 +51,24 @@ class RotatedTokenOut(Schema):
     camera_id: UUID
     device_token: str
 
+@cameras_router.get("/{camera_id}/frame")
+def camera_frame(request, camera_id: UUID):
+    """The camera's last uploaded view, as JPEG. What the annotation tool
+    draws on."""
+    camera = (Camera.objects.for_org(request.auth.org)
+              .filter(pk=camera_id, is_active=True).first())
+    if camera is None:
+        raise ApiError(404, "camera_not_found", "No such camera.")
+    path = frame_path(camera.pk)
+    if not path.exists():
+        raise ApiError(404, "frame_not_available",
+                       "This camera has not uploaded a reference frame yet. "
+                       "Start its worker.")
+    response = FileResponse(path.open("rb"), content_type="image/jpeg")
+    # The frame changes on every worker restart; a stale one would be
+    # annotated against the wrong view.
+    response["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 
 @cameras_router.post("/{camera_id}/token:rotate", response=RotatedTokenOut,
                      auth=owner_only)

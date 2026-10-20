@@ -1,0 +1,12 @@
+# infra/.dockerignore
+**/.git
+**/__pycache__
+**/*.pyc
+**/.env
+**/venvs
+worker-data/
+media/
+models/*.onnx
+ml/
+data/
+docs/

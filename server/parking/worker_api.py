@@ -26,6 +26,11 @@ from parking.worker_config import build_config, resync_slot_ids
 from parking.schemas import ReferenceFrameOut
 from config.throttles import (worker_config_throttle, worker_events_throttle, worker_heartbeat_throttle)
 
+from django.http import FileResponse, HttpRequest
+
+from parking.frames import store as store_frame
+
+
 worker_router = Router(tags=["worker"], auth=device_token)
 
 logger = logging.getLogger(__name__)
@@ -175,3 +180,28 @@ def heartbeat(request, payload: HeartbeatIn):
         "config_version": build_config(camera)["config_version"],
         "resync_slot_ids": resync_slot_ids(camera),
     }
+
+class FrameStoredOut(Schema):
+    camera_id: UUID
+    width: int
+    height: int
+    bytes: int
+    matches_reference_frame: bool
+
+
+@worker_router.post("/frame", response=FrameStoredOut,
+                    throttle=[worker_config_throttle])
+def upload_frame(request: HttpRequest):
+    """Raw `image/jpeg` body — the camera's current view, for the annotation
+    tool to draw on. One per camera, overwritten."""
+    camera = request.auth.camera
+    if not request.body:
+        raise ApiError(422, "invalid_frame", "Empty body.")
+    width, height = store_frame(camera, request.body)
+    matches = (width, height) == (camera.frame_width, camera.frame_height)
+    if not matches:
+        logger.warning(
+            "camera %s captures %dx%d but its polygons are drawn against %dx%d",
+            camera.pk, width, height, camera.frame_width, camera.frame_height)
+    return {"camera_id": camera.pk, "width": width, "height": height,
+            "bytes": len(request.body), "matches_reference_frame": matches}

@@ -38,6 +38,8 @@ DOCUMENTED_ROUTES = {
     ("GET", "/api/v1/worker/config"),
     ("POST", "/api/v1/worker/events"),
     ("POST", "/api/v1/worker/heartbeat"),
+    ("POST", "/api/v1/worker/frame"),
+    ("GET", "/api/v1/cameras/{camera_id}/frame"),
 }
 
 # docs/04_API_CONTRACT.md — "Errors"
@@ -58,6 +60,7 @@ DOCUMENTED_ERROR_CODES = {
     # generic
     "bad_request", "validation_failed", "method_not_allowed",
     "payload_too_large", "http_error",
+    "invalid_frame", "frame_too_large", "frame_not_available",
 }
 
 
