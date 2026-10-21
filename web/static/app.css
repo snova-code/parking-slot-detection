@@ -70,3 +70,46 @@ canvas { max-width: 100%; height: auto; border-radius: 8px;
          padding: .6rem 1.1rem; border-radius: 8px; background: var(--panel);
          border: 1px solid var(--ok); }
 #toast.error { border-color: var(--bad); color: var(--bad); }
+
+/* --- live lot view ------------------------------------------------------- */
+.lot-head { display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap;
+            margin-bottom: 1rem; }
+.lot-head .live { margin-left: auto; text-align: right; }
+
+.conn { display: inline-block; padding: .2rem .6rem; border-radius: 999px;
+        font-size: .8rem; border: 1px solid var(--line); }
+.conn.live { color: var(--ok); border-color: rgba(52,211,153,.5); }
+.conn.live::before { content: "● "; }
+.conn.connecting { color: var(--warn); border-color: rgba(251,191,36,.5); }
+.conn.stopped { color: var(--bad); border-color: rgba(248,113,113,.5); }
+
+.views { display: grid; gap: 1.5rem; }
+.camera-view h2 { display: flex; align-items: baseline; gap: .6rem; }
+.overlay-wrap { position: relative; border-radius: 8px; overflow: hidden;
+                border: 1px solid var(--line); background: #020617; }
+.overlay-wrap.no-frame { min-height: 320px; }
+.overlay-wrap.no-frame::after {
+  content: "No reference frame uploaded yet"; position: absolute; inset: 0;
+  display: grid; place-items: center; color: var(--muted); font-size: .9rem; }
+.frame { display: block; width: 100%; height: auto; }
+.overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.slot polygon { stroke-width: 2; transition: fill .45s ease, stroke .45s ease; }
+.slot text { font: 600 13px system-ui, sans-serif; fill: #e2e8f0;
+             text-anchor: middle; dominant-baseline: middle;
+             paint-order: stroke; stroke: rgba(2,6,23,.85); stroke-width: 3px; }
+
+.slot.status-vacant polygon { fill: rgba(52,211,153,.30); stroke: #34d399; }
+.slot.status-occupied polygon { fill: rgba(96,165,250,.35); stroke: #60a5fa; }
+/* UNKNOWN must not read as a confident state: hatched, dim, dashed outline.
+   Showing a dead camera's last reading as fact is the v1 bug this replaces. */
+.slot.status-unknown polygon { fill: rgba(148,163,184,.18); stroke: #94a3b8;
+                               stroke-dasharray: 6 4; }
+.slot.status-unknown text { fill: #94a3b8; }
+
+@keyframes slotflash { from { filter: brightness(2.1); } to { filter: none; } }
+.slot.flash polygon { animation: slotflash .7s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .slot polygon { transition: none; }
+  .slot.flash polygon { animation: none; }
+}

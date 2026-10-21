@@ -10,6 +10,7 @@
 // clockwise-from-top-left and returns what it stored; this page adopts that.
 import { api, ApiError, fetchBlob } from "./api.js";
 import { describe, mountNav, requireSession, toast } from "./ui.js";
+import { scalePolygon } from "./polygons.js";
 
 const parts = location.pathname.split("/").filter(Boolean);
 const lotId = parts[1];
@@ -385,21 +386,23 @@ async function load() {
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
 
-  const scaleX = canvas.width / camera.reference_frame.width;
-  const scaleY = canvas.height / camera.reference_frame.height;
+
+  const stored = camera.reference_frame;
+  const rendered = { width: canvas.width, height: canvas.height };
   state.slots = camera.slots.map((slot) => ({
     label: slot.label,
     slot_type: slot.slot_type,
-    points: slot.polygon.map(([x, y]) => [x * scaleX, y * scaleY]),
+    points: scalePolygon(slot.polygon, stored, rendered),
   }));
 
+
   nodes.frameInfo.textContent = `Frame ${canvas.width}x${canvas.height}`;
-  if (scaleX !== 1 || scaleY !== 1) {
+  if (stored.width !== rendered.width || stored.height !== rendered.height) {
     nodes.frameWarning.hidden = false;
     nodes.frameWarning.textContent =
-      `This camera captures ${canvas.width}x${canvas.height} but its slots were ` +
-      `drawn against ${camera.reference_frame.width}x${camera.reference_frame.height}. ` +
-      "They have been scaled onto the current frame; saving re-anchors them to it.";
+      `This camera captures ${rendered.width}x${rendered.height} but its slots ` +
+      `were drawn against ${stored.width}x${stored.height}. They have been ` +
+      "scaled onto the current frame; saving re-anchors them to it.";
     markDirty();
   }
 

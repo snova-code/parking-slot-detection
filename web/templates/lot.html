@@ -2,7 +2,19 @@
 {% extends "base.html" %}{% load static %}
 {% block title %}Lot — APMS{% endblock %}
 {% block main %}
-<h1 id="lot-name">Loading…</h1>
-<div id="cameras" class="grid"></div>
+<div class="lot-head">
+  <div>
+    <h1 id="lot-name">Loading…</h1>
+    <p class="counts" id="counts"></p>
+  </div>
+  <div class="live">
+    <span id="conn" class="conn connecting">connecting…</span>
+    <span id="updated" class="muted small"></span>
+  </div>
+</div>
+
+<div id="stale-banner" class="banner warn" hidden></div>
+<div id="views" class="views"></div>
+<p id="empty" class="muted" hidden>This lot has no active cameras.</p>
 {% endblock %}
 {% block scripts %}<script type="module" src="{% static 'lot.js' %}"></script>{% endblock %}
