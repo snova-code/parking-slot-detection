@@ -18,4 +18,6 @@ urlpatterns = [
          TemplateView.as_view(template_name="lot.html"), name="lot"),
     path("lots/<uuid:lot_id>/cameras/<uuid:camera_id>/annotate/",
          TemplateView.as_view(template_name="annotate.html"), name="annotate"),
+     path("lots/<uuid:lot_id>/analytics/",
+         TemplateView.as_view(template_name="analytics.html"), name="analytics"),
 ]

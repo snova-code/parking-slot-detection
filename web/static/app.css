@@ -113,3 +113,33 @@ canvas { max-width: 100%; height: auto; border-radius: 8px;
   .slot polygon { transition: none; }
   .slot.flash polygon { animation: none; }
 }
+
+/* --- analytics ----------------------------------------------------------- */
+.range { display: flex; gap: .6rem; align-items: flex-end; flex-wrap: wrap;
+         margin-left: auto; }
+.range label { font-size: .8rem; color: var(--muted); }
+.range input, .range select { display: block; margin-top: .2rem; padding: .35rem;
+  border-radius: 6px; border: 1px solid var(--line); background: var(--bg);
+  color: var(--text); font: inherit; }
+.quick { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.quick button { font-size: .85rem; }
+.small-button { padding: .2rem .55rem; font-size: .8rem; }
+
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.chart-card { min-width: 0; }
+.chart { width: 100%; height: auto; display: block; margin-top: .75rem; }
+.chart .grid { stroke: rgba(148,163,184,.18); stroke-width: 1; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font: 11px system-ui, sans-serif; }
+.chart .tick.y { text-anchor: end; }
+.chart .tick.x { text-anchor: middle; }
+.chart .bar rect { fill: var(--accent); }
+.chart .bar:hover rect { fill: #93c5fd; }
+.chart .bar.low rect { fill: url(#low-coverage); }
+
+.figure { font-size: 2.4rem; font-weight: 700; margin: .5rem 0 0; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem;
+         margin: 1rem 0 0; font-size: .85rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+#toast.warn { border-color: var(--warn); color: var(--warn); }

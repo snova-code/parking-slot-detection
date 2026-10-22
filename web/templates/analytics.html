@@ -1,0 +1,62 @@
+<!-- web/templates/analytics.html -->
+{% extends "base.html" %}{% load static %}
+{% block title %}Analytics — APMS{% endblock %}
+{% block main %}
+<div class="lot-head">
+  <div>
+    <h1 id="lot-name">Loading…</h1>
+    <p class="muted small" id="scope"></p>
+  </div>
+  <form id="range" class="range">
+    <label>From <input type="datetime-local" id="from" required></label>
+    <label>To <input type="datetime-local" id="to" required></label>
+    <label>Bucket
+      <select id="bucket">
+        <option value="hour">Hour</option>
+        <option value="day">Day</option>
+      </select>
+    </label>
+    <button type="submit">Apply</button>
+    <button type="button" id="export" disabled>Export CSV</button>
+  </form>
+</div>
+
+<div class="quick">
+  <button data-hours="24">Last 24h</button>
+  <button data-hours="168">Last 7 days</button>
+  <button data-hours="720" data-bucket="day">Last 30 days</button>
+</div>
+
+<p id="status" class="muted">Loading…</p>
+
+<section class="card chart-card" id="occupancy-card" hidden>
+  <h2>Occupancy rate</h2>
+  <p class="muted small">
+    Share of observed slot-time that was occupied. Bar opacity is coverage —
+    how much of the bucket was actually watched. Hatched bars had under 25%
+    coverage and are not readable as a rate.
+  </p>
+  <div id="occupancy"></div>
+</section>
+
+<div class="grid two">
+  <section class="card chart-card" id="dwell-card" hidden>
+    <h2>Dwell time</h2>
+    <p class="muted small" id="dwell-summary"></p>
+    <div id="dwell"></div>
+    <p class="muted small">
+      Only completed occupancies that began with an observed arrival. Spans
+      interrupted by a camera outage are excluded.
+    </p>
+  </section>
+
+  <section class="card" id="turnover-card" hidden>
+    <h2>Turnover</h2>
+    <p class="figure" id="turnover">—</p>
+    <p class="muted small">Arrivals per slot per day, over observed time only —
+      an outage lowers both sides of the ratio rather than just the count.</p>
+    <dl class="facts" id="facts"></dl>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="{% static 'analytics.js' %}"></script>{% endblock %}

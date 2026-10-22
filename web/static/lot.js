@@ -261,8 +261,10 @@ function connect() {
   if (!cameras.length) {
     nodes.empty.hidden = false;
     setConnection("stopped", "no cameras");
+
     return;
   }
+document.getElementById("analytics-link").href = `/lots/${lotId}/analytics/`;
 
   nodes.views.replaceChildren(...cameras.map(buildCamera));
   paintCameraMeta();

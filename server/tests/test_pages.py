@@ -22,6 +22,7 @@ PAGES = [
     ("/lots/3f2a0000-0000-4000-8000-000000000001/", "lot.html"),
     ("/lots/3f2a0000-0000-4000-8000-000000000001/cameras/"
      "3f2a0000-0000-4000-8000-000000000002/annotate/", "annotate.html"),
+    ("/lots/3f2a0000-0000-4000-8000-000000000001/analytics/", "analytics.html"),
 ]
 STATIC_TAG = re.compile(r"{%\s*static\s+['\"]([^'\"]+)['\"]\s*%}")
 
